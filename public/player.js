@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=89';
-import * as controls from './controls.js?v=89';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=90';
+import * as controls from './controls.js?v=90';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -434,7 +434,9 @@ async function play(next, opts = {}) {
   }
 
   startHeartbeat(gen);
-  setStatus(describeConversion(reply));
+  // What the server is doing goes in the trace, not on screen.
+  note(describeConversion(reply));
+  setStatus('');
   // Live TV: nothing to resume, no timeline — the player shows LIVE instead
   // of a seek bar and joins at "now".
   $('#watch-stage').classList.toggle('is-live', Boolean(reply.live));
