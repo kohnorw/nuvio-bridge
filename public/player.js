@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=94';
-import * as controls from './controls.js?v=94';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=95';
+import * as controls from './controls.js?v=95';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -373,6 +373,7 @@ async function play(next, opts = {}) {
 
   if (!item.transcodeKey) {
     note('no ffmpeg — playing the source directly');
+    embeddedKnown();
     state.session = { mode: 'source', tracks: [], audio: 0 };
     load(gen, { src: item.url, type: 'video/mp4', resumeAt });
     return;
@@ -401,6 +402,7 @@ async function play(next, opts = {}) {
     // Lumen couldn't take it. VLC is the fallback: straight to it on a
     // desktop with the launcher, offered first everywhere else.
     note(`conversion refused: ${err.message}`);
+    embeddedKnown();
     showFallback(`The server couldn’t convert this: ${err.message}`);
     return;
   }
@@ -430,6 +432,7 @@ async function play(next, opts = {}) {
   };
   state.embeddedSubs = reply.subtitleTracks || [];
   state.embeddedDefault = reply.preferredSubtitle ?? null;
+  state.embeddedKnown = true;
   renderSubtitleMenu();
   chooseDefaultSubtitle();
 
@@ -832,6 +835,10 @@ function startItemSubtitles(gen) {
   state.addonLoaded = false;
   state.embeddedSubs = [];
   state.embeddedDefault = null;
+  // Until the server says what subtitles the file has, no default is
+  // chosen: the addon list usually arrives first, and picking from it then
+  // meant OpenSubtitles won over the file's own track every time.
+  state.embeddedKnown = false;
   state.subDelay = 0;
   state.video?.querySelectorAll('track').forEach((t) => t.remove());
   disposePgs();
@@ -843,8 +850,15 @@ function startItemSubtitles(gen) {
 // (the one picked in the player this session, else Settings, else the audio
 // language, else English — the server ranks the list). Failing that, the
 // subtitle the playlist came with, then a matching track inside the file.
+function embeddedKnown() {
+  if (state.embeddedKnown) return;
+  state.embeddedKnown = true;
+  chooseDefaultSubtitle();
+}
+
 function chooseDefaultSubtitle() {
   if (state.subtitlesOff || state.subtitleTouched || state.subtitle) return;
+  if (state.embeddedKnown === false) return;
 
   // 1. A track inside the file, in the person's language: made for this
   //    exact release, so always in sync. Doesn't wait for the addons.
@@ -1073,7 +1087,11 @@ function syncSubtitles() {
   stopLiveSubs();
   if (state.subtitlesOff) return;
 
-  const chosen = state.subtitle || (current()?.subtitle && { url: current().subtitle, label: 'Addon subtitles' });
+  // The playlist's own (addon) subtitle only once it's known the file has
+  // none of its own to prefer.
+  const fileHasSubs = state.embeddedKnown === false || (state.embeddedSubs || []).some((t) => t.url);
+  const chosen = state.subtitle
+    || (!fileHasSubs && current()?.subtitle && { url: current().subtitle, label: 'Addon subtitles' });
   if (!chosen) return;
 
   if (chosen.pgs) {
