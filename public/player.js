@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=88';
-import * as controls from './controls.js?v=88';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=89';
+import * as controls from './controls.js?v=89';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -616,7 +616,60 @@ function onPlaybackError(err) {
     play(state.index, { forceTranscode: true, resumeAt: state.video.currentTime || undefined });
     return;
   }
+  if (undecodable) { retryDecode(err); return; }
   showFallback(describeError(err));
+}
+
+// A decode error is very often momentary — a corrupt segment, a seek that
+// landed badly, the first segment of a restarted conversion — and the next
+// attempt plays. So "This browser can't decode that file" only appears after
+// DECODE_GRACE_MS of failing without a single frame playing in between.
+// Until then the player keeps retrying from where it was.
+const DECODE_GRACE_MS = 45_000;
+let decodeTrouble = null;
+
+function retryDecode(err) {
+  const { video } = state;
+  const gen = state.gen;
+  if (!decodeTrouble || decodeTrouble.gen !== gen) {
+    decodeTrouble = { gen, since: Date.now(), attempts: 0 };
+    // Any progress at all ends the trouble.
+    const clear = () => { if (decodeTrouble?.gen === gen) decodeTrouble = null; };
+    video.addEventListener('playing', clear, { once: true });
+  }
+  const t = decodeTrouble;
+  if (Date.now() - t.since >= DECODE_GRACE_MS) {
+    decodeTrouble = null;
+    showFallback(describeError(err));
+    return;
+  }
+  t.attempts += 1;
+  setStatus('Having trouble decoding this — retrying…');
+  note(`decode error ${err?.code}, retry ${t.attempts}`);
+  const at = video.currentTime || 0;
+  setTimeout(() => {
+    if (isStale(gen) || decodeTrouble !== t) return;
+    if (state.hls) {
+      // hls.js: rebuild the decoder; every other time, also try swapping the
+      // audio codec setup, the usual cure for an AAC/HE-AAC mismatch.
+      if (t.attempts % 2 === 0) state.hls.swapAudioCodec();
+      state.hls.recoverMediaError();
+    } else {
+      const src = video.currentSrc || video.getAttribute('src');
+      if (src) {
+        video.src = src;
+        video.addEventListener('loadedmetadata', () => { if (at) video.currentTime = at + 0.5; }, { once: true });
+      }
+    }
+    video.play()?.catch?.(() => {});
+    // If nothing has played by the end of the grace period, say so.
+    setTimeout(() => {
+      if (!isStale(gen) && decodeTrouble === t && Date.now() - t.since >= DECODE_GRACE_MS - 100) {
+        decodeTrouble = null;
+        showFallback(describeError(err));
+      }
+    }, Math.max(0, DECODE_GRACE_MS - (Date.now() - t.since)));
+  }, Math.min(5000, 1000 * t.attempts));
 }
 
 function describeError(err) {
@@ -700,6 +753,8 @@ function watchForSilence(gen) {
     if (video.paused && video.readyState >= 2) { autoplay(gen); return; }
     // Still loading but getting somewhere: give it longer.
     if (video.readyState >= 2 && video.buffered?.length) { watchForSilence(gen); return; }
+    // Mid-way through decode retries: those have their own 45 s deadline.
+    if (decodeTrouble?.gen === gen) { watchForSilence(gen); return; }
 
     let server = null;
     try { server = await request(`/api/transcode/debug/${session.sid}`); } catch { /* best effort */ }

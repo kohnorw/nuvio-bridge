@@ -14,14 +14,14 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
-<link rel="stylesheet" href="/style.css?v=88">
+<link rel="stylesheet" href="/style.css?v=89">
 <!-- The module graph is app.js → player.js → controls.js: three round trips
      in series if the browser has to discover each import itself. Named here,
      all four are fetched at once. -->
-<link rel="modulepreload" href="/app.js?v=88">
-<link rel="modulepreload" href="/platform.js?v=88">
-<link rel="modulepreload" href="/player.js?v=88">
-<link rel="modulepreload" href="/controls.js?v=88">
+<link rel="modulepreload" href="/app.js?v=89">
+<link rel="modulepreload" href="/platform.js?v=89">
+<link rel="modulepreload" href="/player.js?v=89">
+<link rel="modulepreload" href="/controls.js?v=89">
 </head>
 <body data-theme="White">
 
@@ -333,6 +333,6 @@
     window.addEventListener('unhandledrejection', function (e) { heal(e.reason && (e.reason.message || e.reason)); });
   })();
 </script>
-<script src="/app.js?v=88" type="module"></script>
+<script src="/app.js?v=89" type="module"></script>
 </body>
 </html>
