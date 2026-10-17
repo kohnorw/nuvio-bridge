@@ -790,6 +790,10 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   heartbeat(sid);
 
   const first = s.nseg ? Math.min(segAt(s, Math.max(0, seek)), s.nseg - 1) : 0;
+  // Where the player should begin. Without saying so in the playlist,
+  // Safari fetched segment 0 first and only then seeked: ffmpeg was
+  // restarted at 0 and then back at the resume point before anything showed.
+  s.startAt = !s.live && seek > 0 ? Math.min(seek, Math.max(0, exact - 1)) : 0;
   s.lastReq = first;
   await launchAt(s, first);
 
@@ -902,6 +906,7 @@ export function readPlaylist(sid) {
   // Only true when every segment starts on a keyframe: always for a
   // conversion and a keyframe-cut remux, never for a remux on the grid.
   if (!copying(s) || s.bounds) lines.push('#EXT-X-INDEPENDENT-SEGMENTS');
+  if (s.startAt > 0) lines.push(`#EXT-X-START:TIME-OFFSET=${s.startAt.toFixed(3)},PRECISE=YES`);
   lengths.forEach((len, i) => lines.push(`#EXTINF:${len.toFixed(3)},`, `/hls/${sid}/seg${i}.ts`));
   lines.push('#EXT-X-ENDLIST');
   return `${lines.join('\n')}\n`;
