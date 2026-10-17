@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=87';
-import * as controls from './controls.js?v=87';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=88';
+import * as controls from './controls.js?v=88';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -440,7 +440,8 @@ async function play(next, opts = {}) {
   $('#watch-stage').classList.toggle('is-live', Boolean(reply.live));
   // Live channels go on Continue watching as "recently watched".
   if (reply.live && current()?.id) post('/api/progress', { type: 'tv', id: current().id }).catch(() => {});
-  load(gen, { src: reply.url, type: 'application/x-mpegURL', resumeAt: reply.live ? 0 : resumeAt });
+  load(gen, { src: reply.url, type: 'application/x-mpegURL', resumeAt: reply.live ? 0 : resumeAt, live: Boolean(reply.live) });
+  if (reply.live) watchLive(gen);
   watchForSilence(gen);
 }
 
@@ -476,7 +477,7 @@ function describeConversion(reply) {
   return `Converting ${reply.videoCodec}${where}${extras.length ? ` · ${extras.join(' · ')}` : ''}.`;
 }
 
-async function load(gen, { src, type, resumeAt }) {
+async function load(gen, { src, type, resumeAt, live = false }) {
   const { video } = state;
   note(`source ${type} ${src.slice(0, 60)}`);
 
@@ -502,7 +503,23 @@ async function load(gen, { src, type, resumeAt }) {
     return;
   }
 
-  const hls = new Hls({
+  const hls = new Hls(live ? {
+    // Live TV: play about three segments behind the newest, and if the
+    // player falls further back than that (a stall, a backgrounded tab),
+    // speed up a little to catch up rather than drifting minutes behind.
+    liveSyncDurationCount: 3,
+    liveMaxLatencyDurationCount: 8,
+    maxLiveSyncPlaybackRate: 1.1,
+    maxBufferLength: 20,
+    backBufferLength: 30,
+    maxBufferHole: 1,
+    // A channel reconnecting on the server leaves a short gap in segments;
+    // keep asking rather than declaring the stream dead.
+    manifestLoadingMaxRetry: 6,
+    levelLoadingMaxRetry: 8,
+    fragLoadingMaxRetry: 8,
+    fragLoadingTimeOut: 20000,
+  } : {
     // Ask for the resume point's segment first. Starting at 0 and seeking
     // once the metadata arrived made the server restart ffmpeg twice — at 0,
     // then back where it had already been — before anything played.
@@ -528,6 +545,13 @@ async function load(gen, { src, type, resumeAt }) {
     if (isStale(gen) || !data.fatal) return;
     note(`hls fatal: ${data.type} ${data.details}`);
     if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { hls.recoverMediaError(); return; }
+    // Live: the server reconnects to the channel on its own. Try again for
+    // a while before giving up on it.
+    if (live && data.type === Hls.ErrorTypes.NETWORK_ERROR && (state.liveRetries = (state.liveRetries || 0) + 1) <= 6) {
+      setStatus('Reconnecting to the channel…');
+      setTimeout(() => { if (!isStale(gen)) hls.startLoad(); }, 2000);
+      return;
+    }
     showFallback(data.type === Hls.ErrorTypes.NETWORK_ERROR
       ? 'The stream stopped arriving.'
       : `Playback failed: ${data.details}`);
@@ -535,6 +559,36 @@ async function load(gen, { src, type, resumeAt }) {
   hls.loadSource(src);
   hls.attachMedia(video);
   syncSubtitles();
+}
+
+// Live TV, in any player (hls.js or Safari's own): if the picture has been
+// stuck for a few seconds while meant to be playing, jump back to just
+// behind the newest segment. Without this, a hiccup on the channel left an
+// iPhone frozen on the last frame until the person reloaded.
+function watchLive(gen) {
+  const { video } = state;
+  let lastTime = -1;
+  let stuckSince = 0;
+  const timer = setInterval(() => {
+    if (isStale(gen)) { clearInterval(timer); return; }
+    if (video.paused || video.readyState === 0) { stuckSince = 0; return; }
+    if (video.currentTime !== lastTime) {
+      lastTime = video.currentTime;
+      stuckSince = 0;
+      state.liveRetries = 0;
+      return;
+    }
+    stuckSince ||= Date.now();
+    if (Date.now() - stuckSince < 6000) return;
+    stuckSince = 0;
+    const { seekable } = video;
+    const edge = state.hls?.liveSyncPosition
+      ?? (seekable?.length ? seekable.end(seekable.length - 1) - 6 : null);
+    note(`live stalled — jumping to the edge (${Math.round(edge || 0)}s)`);
+    if (state.hls) state.hls.startLoad();
+    if (Number.isFinite(edge) && edge > video.currentTime) video.currentTime = edge;
+    video.play()?.catch?.(() => {});
+  }, 1000);
 }
 
 // A growing HLS playlist can only seek into what ffmpeg has written, so clamp
