@@ -719,7 +719,8 @@ button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px
 }
 
 /* iOS-style toggle, built from a checkbox so it stays keyboard-operable */
-.switch-row input[type="checkbox"] {
+.switch-row input[type="checkbox"],
+.settings-switch input[type="checkbox"] {
   flex: 0 0 auto; position: relative;
   width: 51px; height: 31px; margin: 0;
   border-radius: var(--r-full);
@@ -727,15 +728,18 @@ button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px
   -webkit-appearance: none; appearance: none;
   transition: background var(--m-fast) var(--ease-standard);
 }
-.switch-row input[type="checkbox"]::after {
+.switch-row input[type="checkbox"]::after,
+.settings-switch input[type="checkbox"]::after {
   content: ""; position: absolute; top: 2px; left: 2px;
   width: 27px; height: 27px; border-radius: var(--r-full);
   background: #fff;
   box-shadow: 0 2px 5px rgb(0 0 0 / 0.35);
   transition: transform var(--m-fast) var(--ease-standard);
 }
-.switch-row input[type="checkbox"]:checked { background: var(--accent); }
-.switch-row input[type="checkbox"]:checked::after { transform: translateX(20px); }
+.switch-row input[type="checkbox"]:checked,
+.settings-switch input[type="checkbox"]:checked { background: var(--accent); }
+.switch-row input[type="checkbox"]:checked::after,
+.settings-switch input[type="checkbox"]:checked::after { transform: translateX(20px); }
 
 .chip-row.inline { margin-left: 0; margin-right: 0; padding: 0; }
 .sheet .btn-primary { margin-top: 22px; }
@@ -2159,3 +2163,7 @@ body.watching { overflow: hidden; }
   background: rgb(230 40 40 / 0.92);
   font-size: 11px; font-weight: 800; letter-spacing: 0.7px; color: #fff;
 }
+
+/* Settings → Subtitles on/off: a settings row carrying the iOS toggle. */
+.settings-switch { align-items: center; gap: 16px; cursor: pointer; }
+.settings-langs.subs-off #settings-sub-lang { opacity: 0.4; }

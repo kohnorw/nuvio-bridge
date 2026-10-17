@@ -1,5 +1,5 @@
-import * as platform from './platform.js?v=95';
-import * as player from './player.js?v=95';
+import * as platform from './platform.js?v=96';
+import * as player from './player.js?v=96';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -8,7 +8,7 @@ const THEMES = ['White', 'Gold', 'Jade', 'RoseGold', 'ArcticBlue', 'Graphite',
                 'Crimson', 'Ocean', 'Violet', 'Emerald', 'Amber', 'Rose'];
 
 const state = { profiles: [], profile: null, session: null, homeLoaded: false, libraryLoaded: false };
-let prefs = { autoplay: false, binge: false, quality: 'any', audioLang: '', subLang: '' };
+let prefs = { autoplay: false, binge: false, quality: 'any', audioLang: '', subLang: '', subtitles: true };
 let languageOptions = [];
 const QUALITIES = [['any', 'Any'], ['2160p', '4K'], ['1080p', '1080p'], ['720p', '720p']];
 
@@ -1464,6 +1464,24 @@ function renderSettingsLanguages() {
   if (!$('#settings-audio-lang')) return;
   renderLanguageSelect('#settings-audio-lang', 'audioLang', 'File default');
   renderLanguageSelect('#settings-sub-lang', 'subLang', 'Off');
+  renderSubtitleSwitch();
+}
+
+// Settings → Subtitles: on or off everywhere. Off keeps the language for
+// when they're turned back on.
+function renderSubtitleSwitch() {
+  const toggle = $('#settings-subs-on');
+  if (!toggle) return;
+  const on = prefs.subtitles !== false;
+  toggle.checked = on;
+  toggle.closest('.settings-langs')?.classList.toggle('subs-off', !on);
+  player.setSubtitlesEnabled?.(on);
+  toggle.onchange = () => {
+    prefs.subtitles = toggle.checked;
+    toggle.closest('.settings-langs')?.classList.toggle('subs-off', !toggle.checked);
+    player.setSubtitlesEnabled?.(toggle.checked);
+    savePrefs();
+  };
 }
 
 async function savePrefs() {
@@ -1694,6 +1712,7 @@ async function boot() {
 
   // Arriving at /watch is the browser player, not the catalog — no point
   // loading a home screen nobody asked for behind it.
+  player.setSubtitlesEnabled?.(prefs.subtitles !== false);
   if (player.isWatchRoute()) {
     screen('watch');
     player.init();

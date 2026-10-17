@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=95';
-import * as controls from './controls.js?v=95';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=96';
+import * as controls from './controls.js?v=96';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -144,6 +144,13 @@ export function opening(message = 'Finding the best stream…') {
   setStatus(message);
 }
 
+// Settings → Subtitles. Off means no subtitle is turned on by itself; the
+// player's menu can still turn one on for the film being watched.
+let subtitlesEnabled = true;
+export function setSubtitlesEnabled(on) {
+  subtitlesEnabled = Boolean(on);
+}
+
 export async function mount(options = {}) {
   if (options.onExit) state.onExit = options.onExit;
   state.inPage = Boolean(options.inPage);
@@ -155,7 +162,8 @@ export async function mount(options = {}) {
   state.loadedIndex = null;
   if (!options.keepChoices) {
     state.subLangChoice = null;
-    state.subtitlesOff = false;
+    // Settings → Subtitles off: start every film without them.
+    state.subtitlesOff = !subtitlesEnabled;
   }
   const params = new URLSearchParams(location.search);
   state.token = params.get('t');

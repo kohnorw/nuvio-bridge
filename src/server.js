@@ -667,7 +667,7 @@ app.get('/play', async (req, res, next) => {
 
     const user = currentUser(req);
     const { type, id } = req.query;
-    const prefs = { ...DEFAULT_PREFS, ...(user?.prefs || {}) };
+    const prefs = playbackPrefs(user);
     const plan = {
       mediaUrl,
       type,
@@ -720,6 +720,7 @@ app.post('/api/prefs', requireUser, async (req, res, next) => {
       quality: ['any', '2160p', '1080p', '720p'].includes(req.body?.quality) ? req.body.quality : 'any',
       audioLang: lang(req.body?.audioLang),
       subLang: lang(req.body?.subLang),
+      subtitles: req.body?.subtitles !== false,
     };
     await store.update(req.user, { prefs });
     res.json(prefs);
@@ -734,7 +735,16 @@ const DEFAULT_PREFS = {
   quality: 'any',
   audioLang: '',   // '' means leave it to VLC
   subLang: '',     // '' means no subtitle preference
+  subtitles: true, // false: never turn subtitles on by themselves
 };
+
+// The preferences as playback uses them. With subtitles switched off in
+// Settings, the language stays saved (for when they're switched back on) but
+// nothing — VLC playlists, the player's default track — turns them on.
+function playbackPrefs(user) {
+  const prefs = { ...DEFAULT_PREFS, ...(user?.prefs || {}) };
+  return prefs.subtitles === false ? { ...prefs, subLang: '' } : prefs;
+}
 
 // Everything playable, best first: the quality preference floats to the top,
 // then the addons' own ranking. Returning the whole list rather than one pick
@@ -878,7 +888,7 @@ a{display:inline-block;margin-top:20px;padding:13px 28px;border-radius:40px;back
 app.get('/play/auto/:type/:id', requireUser, async (req, res, next) => {
   try {
     const { type, id } = req.params;
-    const prefs = { ...DEFAULT_PREFS, ...(req.user.prefs || {}) };
+    const prefs = playbackPrefs(req.user);
 
     // With binge on, hand the player a playlist of what's coming rather than
     // a single file — it gets a real queue with next/previous of its own.
@@ -1520,7 +1530,7 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
     const plan = await transcode.inspect(url);
     // An image subtitle to burn in (ffmpeg stream index), or none.
     const burn = Number.isInteger(req.body?.burn) ? req.body.burn : null;
-    const prefs = { ...DEFAULT_PREFS, ...(req.user.prefs || {}) };
+    const prefs = playbackPrefs(req.user);
 
     // Default languages from Settings. The player sends no audio index on a
     // first start, so the track in the preferred language is picked here;
