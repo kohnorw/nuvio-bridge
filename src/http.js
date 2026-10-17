@@ -23,6 +23,7 @@ import zlib from 'node:zlib';
 import { promisify } from 'node:util';
 
 const gzip = promisify(zlib.gzip);
+const brotli = promisify(zlib.brotliCompress);
 
 const BODY_LIMIT = 1024 * 1024;
 const COMPRESS_MIN = 1024;
@@ -114,6 +115,12 @@ export function createApp() {
       // long film being proxied is not stalled — so only the headers are
       // given a deadline, not the body.
       server.headersTimeout = 30_000;
+      // A player fetches a segment every few seconds, and a paused one not at
+      // all for a while. Node's default of five seconds closed the connection
+      // between almost every pair of segments, so each one paid for a new TCP
+      // (and, behind no proxy, TLS) handshake — on a phone over the internet,
+      // that's the stutter. Kept under headersTimeout, as Node requires.
+      server.keepAliveTimeout = 25_000;
       server.requestTimeout = 0;
       return server.listen(port, host, callback);
     },
@@ -324,6 +331,30 @@ async function sendBody(req, res, body) {
 
 // ---------------------------------------------------------------- static
 
+// The app's own files never change while the server runs, so each one is
+// compressed once — brotli and gzip — and the result kept. Compressing
+// app.js and style.css on every launch of the home-screen app was CPU spent
+// on the critical path of opening it, every time, for the same bytes.
+const packedCache = new Map();
+
+async function packed(filePath, etag, encoding, raw) {
+  const key = `${encoding}:${filePath}`;
+  const hit = packedCache.get(key);
+  if (hit && hit.etag === etag) return hit.body;
+  const body = encoding === 'br'
+    ? await brotli(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length } })
+    : await gzip(raw, { level: 9 });
+  packedCache.set(key, { etag, body });
+  return body;
+}
+
+function preferredEncoding(req) {
+  const accepted = String(req.headers['accept-encoding'] || '');
+  if (/\bbr\b/.test(accepted)) return 'br';
+  if (/\bgzip\b/.test(accepted)) return 'gzip';
+  return null;
+}
+
 export function staticFiles(root, { setHeaders } = {}) {
   return async function serve(req, res, next) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
@@ -351,7 +382,7 @@ async function sendFile(req, res, filePath, { stats, setHeaders }) {
   res.type(MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream');
   res.setHeader('etag', etag);
   res.setHeader('last-modified', info.mtime.toUTCString());
-  if (setHeaders) setHeaders(res, filePath);
+  if (setHeaders) setHeaders(res, filePath, req);
 
   // A conditional request that still matches costs one header and no body.
   if (req.headers['if-none-match'] === etag) {
@@ -359,8 +390,17 @@ async function sendFile(req, res, filePath, { stats, setHeaders }) {
     return res.end();
   }
 
-  // Small files are read into memory so they can be gzipped; anything large
-  // is an image or a video and is streamed as-is.
+  // Text is sent from the compressed cache; anything else small is read into
+  // memory, and anything large is streamed as-is.
+  const type = String(res.getHeader('content-type') || '');
+  const encoding = preferredEncoding(req);
+  if (encoding && COMPRESSIBLE.test(type) && info.size >= COMPRESS_MIN && info.size <= 2 * 1024 * 1024) {
+    const body = await packed(filePath, etag, encoding, await fsp.readFile(filePath));
+    res.setHeader('content-encoding', encoding);
+    res.setHeader('vary', 'accept-encoding');
+    res.setHeader('content-length', body.length);
+    return req.method === 'HEAD' ? res.end() : res.end(body);
+  }
   if (info.size <= 512 * 1024) {
     return res.send(await fsp.readFile(filePath));
   }

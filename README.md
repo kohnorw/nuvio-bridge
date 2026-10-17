@@ -35,6 +35,17 @@ cp .env.example .env          # set PUBLIC_URL to the address your phone uses
 docker compose up -d --build
 ```
 
+Or skip the build and use the prebuilt image (amd64 and arm64, Jellyfin's
+ffmpeg), published to GitHub Container Registry on every push to `main`:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+The image is `ghcr.io/kohnorw/nuvio-bridge:latest`. While the repository is
+private, run `docker login ghcr.io` on the server first, with a GitHub token
+that has `read:packages`.
+
 Then on any device:
 
 1. Open `http://<your-server>:8080`
@@ -254,6 +265,7 @@ The subtitle menu combines two sources:
 | `TRANSCODE_PRESET` | by core count | x264 preset, for re-encodes only. Unset picks from the core count. |
 | `TRANSCODE_MAX_HEIGHT` | `1080` | Encode height ceiling. The biggest lever on speed. 0 encodes at source height. |
 | `TRANSCODE_SEGMENT_SECS` | `2` | Segment length. Shorter starts faster and costs more requests. |
+| `TRANSCODE_REMUX_SEGMENT_SECS` | `4` | Shortest segment for a remux of an MKV, which is cut at the file's own keyframes. Fewer, larger requests keep iPhones buffered over the internet. |
 | `TRANSCODE_AHEAD_SECS` | `90` | How far ahead of the viewer to convert before pausing ffmpeg. Raise it if a slow source causes buffering. |
 | `TRANSCODE_CRF` | `23` | Quality for re-encodes (CRF/CQ/QP depending on the encoder). Lower is better and bigger. |
 | `TRANSCODE_DIR` | `STATE_DIR/hls` | Where segments are written. Point it at a disk with room. |
@@ -675,6 +687,7 @@ src/languages.js  language codes, subtitle matching, release-name hints
 src/addons.js     Stremio addon protocol — manifests, catalogs, search, meta, streams
 src/http.js       the web layer — routing, cookies, JSON bodies, static, gzip
 src/transcode.js  ffmpeg — HLS sessions, remux or re-encode, for the browser
+src/keyframes.js  Matroska keyframe index (Cues), so a remux is cut where the file's keyframes are
 public/vendor/    hls.js, for browsers without native HLS (Chrome, Firefox)
 src/players.js    per-platform hand-off: vlc-x-callback://, intent://, .m3u
 src/signing.js    HMAC signatures for the URLs the browser fetches through us

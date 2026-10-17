@@ -1,5 +1,5 @@
-import * as platform from './platform.js?v=85';
-import * as player from './player.js?v=85';
+import * as platform from './platform.js?v=86';
+import * as player from './player.js?v=86';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -179,7 +179,7 @@ $('#switch-profile').addEventListener('click', () => showProfiles());
 // -------------------------------------------------------------- profiles
 
 async function showProfiles() {
-  state.profiles = await api('/api/profiles').catch(() => []);
+  state.profiles = await takeProfiles().catch(() => []);
 
   // One profile and nothing to choose: don't make them tap through a picker.
   if (state.profiles.length <= 1) return selectProfile(state.profiles[0] || { index: 1, name: 'Profile' });
@@ -255,10 +255,13 @@ async function loadHome() {
   skeleton(rows, { count: 12 });
 
   try {
-    const [data, watching] = await Promise.all([
+    // Boot may already have asked for these, alongside the session.
+    const early = prefetched.home;
+    prefetched.home = null;
+    const [data, watching] = await (early || Promise.all([
       api('/api/home'),
       api('/api/progress').catch(() => []),
-    ]);
+    ]));
     state.homeLoaded = true;
     rows.innerHTML = '';
 
@@ -1639,10 +1642,34 @@ document.addEventListener('keydown', (event) => {
 
 // ------------------------------------------------------------------ boot
 
+// Requests boot starts before it knows it needs them, so they run alongside
+// /api/session rather than one after another. Each is used once at most.
+const prefetched = { home: null, profiles: null };
+
+function takeProfiles() {
+  const early = prefetched.profiles;
+  prefetched.profiles = null;
+  return early || api('/api/profiles');
+}
+
 async function boot() {
   registerServiceWorker();
 
-  const session = await api('/api/session').catch(() => ({ signedIn: false }));
+  // Returning within the same visit goes straight to Home with the profile
+  // already chosen: ask for everything that screen needs at once. Opening
+  // the app afresh shows the profile picker, so only the profiles.
+  const sessionRequest = api('/api/session').catch(() => ({ signedIn: false }));
+  if (!player.isWatchRoute()) {
+    prefetched.profiles = api('/api/profiles');
+    prefetched.profiles.catch(() => {});
+    if (profileChosenThisVisit()) {
+      prefetched.home = Promise.all([api('/api/home'), api('/api/progress').catch(() => [])]);
+      prefetched.home.catch(() => {});
+    }
+  }
+
+  const session = await sessionRequest;
+  if (!session.signedIn) { prefetched.home = null; prefetched.profiles = null; }
   state.session = session;
   platform.setServerCaps?.({ transcode: session.transcode });
   setTheme(session.theme);
@@ -1683,7 +1710,7 @@ async function boot() {
   // the home-screen app: within one tab, a reload or coming back from the
   // player keeps the profile already chosen there.
   if (session.profileIndex != null && profileChosenThisVisit()) {
-    state.profiles = await api('/api/profiles').catch(() => []);
+    state.profiles = await takeProfiles().catch(() => []);
     state.profile = state.profiles.find((p) => p.index === session.profileIndex)
       || state.profiles[0] || null;
     paintProfile(state.profile);
@@ -1692,6 +1719,7 @@ async function boot() {
     return;
   }
 
+  prefetched.home = null;
   await showProfiles();
 }
 

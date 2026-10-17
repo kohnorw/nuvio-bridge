@@ -9,16 +9,16 @@
 // single-use as often as not — a cached one is a link that has already been
 // spent.
 
-const CACHE = 'nuvio-shell-v85';
+const CACHE = 'nuvio-shell-v86';
 
 const SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=85',
-  '/app.js?v=85',
-  '/platform.js?v=85',
-  '/player.js?v=85',
-  '/controls.js?v=85',
+  '/style.css?v=86',
+  '/app.js?v=86',
+  '/platform.js?v=86',
+  '/player.js?v=86',
+  '/controls.js?v=86',
   '/manifest.webmanifest',
   '/icons/icon.svg',
   '/icons/icon-192.png',
@@ -28,6 +28,10 @@ const SHELL = [
   '/vendor/libpgs.js',
   '/vendor/libpgs.worker.js',
 ];
+
+// How long a launch waits on the network for the page before using the
+// cached one.
+const NAVIGATE_TIMEOUT_MS = 2500;
 
 const NEVER_CACHE = /^\/(api|play|playlist|media|hls|sub\.vtt|healthz|watch)/;
 
@@ -60,18 +64,60 @@ self.addEventListener('fetch', (event) => {
   if (NEVER_CACHE.test(url.pathname)) return;
 
   // Navigations go to the network first so a new build is picked up on the
-  // next load; the cached shell is only there for when the network isn't.
+  // next load. On a slow or flaky connection, though, waiting the whole way
+  // for a timeout before falling back is what made the home-screen app sit
+  // on a blank screen: after a moment the cached shell is used instead, and
+  // the network copy still refreshes the cache for next time.
+  if (request.mode === 'navigate' && !['/', '/index.html'].includes(url.pathname)) {
+    event.respondWith(fetch(request).catch(() => caches.match('/index.html')));
+    return;
+  }
   if (request.mode === 'navigate') {
+    const network = fetch(request).then((response) => {
+      if (response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE).then((cache) => cache.put('/index.html', copy));
+      }
+      return response;
+    });
+    event.waitUntil(network.catch(() => {}));
+    event.respondWith(new Promise((resolve) => {
+      let settled = false;
+      const fallback = () => caches.match('/index.html').then((hit) => {
+        if (hit && !settled) { settled = true; resolve(hit); }
+        return hit;
+      });
+      const timer = setTimeout(fallback, NAVIGATE_TIMEOUT_MS);
+      network.then((response) => {
+        clearTimeout(timer);
+        if (!settled) { settled = true; resolve(response); }
+      }).catch(() => {
+        clearTimeout(timer);
+        fallback().then((hit) => { if (!hit && !settled) { settled = true; resolve(Response.error()); } });
+      });
+    }));
+    return;
+  }
+
+  // A versioned file (/app.js?v=86) is that build's copy and never changes,
+  // and index.html names every one by version, so all the modules always
+  // come from one build. Those are served straight from the cache: no
+  // network round trip at all on launch.
+  if (url.searchParams.has('v') && /\.(js|css)$/.test(url.pathname)) {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html')),
+      caches.match(request).then((hit) => hit || fetch(request).then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })),
     );
     return;
   }
 
-  // The app's own code: network first, so every module comes from the same
-  // build. Serving some from cache and some fresh is how a new app.js ends up
-  // calling a function an old platform.js doesn't have. The cache is only for
-  // when there's no network.
+  // Anything else of the app's own code: network first, so every module
+  // comes from the same build. The cache is only for when there's no network.
   if (/\.(js|css)$/.test(url.pathname) && !url.pathname.startsWith('/vendor/')) {
     event.respondWith(
       fetch(request, { cache: 'no-cache' }).then((response) => {

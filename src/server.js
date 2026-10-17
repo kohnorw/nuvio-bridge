@@ -180,6 +180,7 @@ app.post('/api/profile', requireUser, async (req, res, next) => {
   try {
     await store.update(req.user, { profileIndex: Number(req.body?.index) });
     addonsApi.clearCache();
+    for (const key of homeCache.keys()) if (key.startsWith(`${req.user.userId}:`)) homeCache.delete(key);
     res.json({ profileIndex: req.user.profileIndex });
   } catch (err) { next(err); }
 });
@@ -230,31 +231,58 @@ app.get('/api/catalog', requireUser, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// The home screen is a dozen addon catalogs fetched in parallel, so it is as
+// slow as the slowest addon — every time the app is opened. It is kept per
+// profile and served at once while a fresh copy is fetched behind it
+// (stale-while-revalidate): opening the app shows the last home instantly and
+// the next open has the new one.
+const HOME_FRESH_MS = 60_000;
+const HOME_STALE_MS = 30 * 60_000;
+const homeCache = new Map();
+
 app.get('/api/home', requireUser, async (req, res, next) => {
   try {
-    const token = await accessToken(req.user);
     const index = await profileIndex(req.user);
-
-    const [addons, settings, userCollections] = await Promise.all([
-      installedAddons(req.user),
-      nuvio.homeCatalogSettings(token, index).catch(() => null),
-      nuvio.collections(token, index).catch(() => []),
-    ]);
-
-    const rows = orderCatalogs(addonsApi.catalogList(addons, { home: true }), settings).slice(0, ROW_LIMIT);
-
-    const catalogRows = await Promise.all(rows.map(async (row) => ({
-      ...row,
-      items: await addonsApi.catalog(addons, row).catch(() => []),
-    })));
-
-    res.json({
-      hero: buildHeroPool(catalogRows),
-      collections: collectionRows(userCollections),
-      rows: catalogRows.filter((row) => row.items.length),
-    });
+    const key = `${req.user.userId}:${index}`;
+    const hit = homeCache.get(key);
+    const age = hit ? Date.now() - hit.at : Infinity;
+    if (hit?.body && age < HOME_STALE_MS) {
+      if (age > HOME_FRESH_MS && !hit.pending) {
+        hit.pending = buildHome(req.user, index)
+          .then((body) => { homeCache.set(key, { at: Date.now(), body }); })
+          .catch(() => { hit.pending = null; });
+      }
+      return res.json(hit.body);
+    }
+    const body = await buildHome(req.user, index);
+    if (homeCache.size > 500) homeCache.clear();
+    homeCache.set(key, { at: Date.now(), body });
+    return res.json(body);
   } catch (err) { next(err); }
 });
+
+async function buildHome(user, index) {
+  const token = await accessToken(user);
+
+  const [addons, settings, userCollections] = await Promise.all([
+    installedAddons(user),
+    nuvio.homeCatalogSettings(token, index).catch(() => null),
+    nuvio.collections(token, index).catch(() => []),
+  ]);
+
+  const rows = orderCatalogs(addonsApi.catalogList(addons, { home: true }), settings).slice(0, ROW_LIMIT);
+
+  const catalogRows = await Promise.all(rows.map(async (row) => ({
+    ...row,
+    items: await addonsApi.catalog(addons, row).catch(() => []),
+  })));
+
+  return {
+    hero: buildHeroPool(catalogRows),
+    collections: collectionRows(userCollections),
+    rows: catalogRows.filter((row) => row.items.length),
+  };
+}
 
 const HERO_ITEM_LIMIT = 8;
 
@@ -1716,7 +1744,16 @@ app.get('/healthz', (req, res) => res.json({
 // index.html must never be cached or a stale copy keeps pointing at old
 // asset versions; the versioned assets themselves can cache hard.
 app.use(staticFiles(path.join(__dirname, '..', 'public'), {
-  setHeaders(res, filePath) {
+  setHeaders(res, filePath, req) {
+    // A file asked for by version (/app.js?v=86) is that build's copy for
+    // ever: index.html names the version, so a new build asks for a new URL.
+    // Those can be held without even a revalidation round trip, which is
+    // most of what made opening the home-screen app slow over a phone
+    // connection — five 304s in series before anything could run.
+    if (req?.query?.v && /\.(js|css)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return;
+    }
     // The app's own code must be revalidated on every load. It was cached for
     // a day, so after an update the new app.js ran against yesterday's
     // platform.js and failed ("setServerCaps is not a function"). no-cache

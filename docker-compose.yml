@@ -7,7 +7,9 @@ services:
         # debian: smaller, no GPU tone mapping.
         # none: no conversion at all; anything the browser can't play goes to VLC.
         FFMPEG: ${FFMPEG:-jellyfin}
-    image: nuvio-bridge
+    # `docker compose pull` fetches the prebuilt image; `up --build` builds it
+    # here instead.
+    image: ghcr.io/kohnorw/nuvio-bridge:latest
     container_name: nuvio-bridge
     restart: unless-stopped
     ports:
@@ -47,6 +49,9 @@ services:
       # NVENC session (8 on current NVIDIA drivers).
       TRANSCODE_MAX: ${TRANSCODE_MAX:-3}
       TRANSCODE_SEGMENT_SECS: ${TRANSCODE_SEGMENT_SECS:-2}
+      # Shortest segment for an MKV remux, which is cut at the file's own
+      # keyframes so iPhones and subtitles stay in step.
+      TRANSCODE_REMUX_SEGMENT_SECS: ${TRANSCODE_REMUX_SEGMENT_SECS:-4}
       # How far ahead of the viewer to convert before pausing ffmpeg. A paused
       # film costs nothing; raise this if a slow source causes buffering.
       TRANSCODE_AHEAD_SECS: ${TRANSCODE_AHEAD_SECS:-90}

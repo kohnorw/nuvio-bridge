@@ -36,6 +36,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import * as hw from './hwaccel.js';
+import * as keyframes from './keyframes.js';
 
 export const enabled = process.env.TRANSCODE !== 'false';
 
@@ -61,6 +62,15 @@ const COPY_LOOKAHEAD_SEGS = Math.max(LOOKAHEAD_SEGS, Math.ceil(45 / SEG));
 // Everything converted in the last 20 minutes is kept, so scrubbing back to
 // anywhere in it is instant (it's on disk already). Adjustable.
 const KEEP_BEHIND_SEGS = Math.ceil(Number(process.env.TRANSCODE_KEEP_BEHIND_SECS || 1200) / SEG);
+// A remux of a Matroska file is cut at the source's own keyframes (see
+// keyframes.js), merged into segments at least this long. Longer than a
+// conversion's, because a remux is nearly free to make and every segment is
+// a round trip: on a phone over the internet, fewer and larger requests are
+// what keeps the buffer full.
+const REMUX_SEG = Math.max(SEG, Number(process.env.TRANSCODE_REMUX_SEGMENT_SECS || 4));
+// The longest gap between keyframes worth building a playlist on. Beyond it
+// the index is probably sparse rather than the keyframes, so the grid is used.
+const MAX_GOP_SECS = 30;
 const MAX_HEIGHT = Number(process.env.TRANSCODE_MAX_HEIGHT || 1080);
 const QUALITY = Number(process.env.TRANSCODE_CRF || 23);
 
@@ -168,6 +178,7 @@ export function diagnose(sid) {
     sid,
     segments: segmentFiles(s.dir).length,
     segmentType: 'mpegts',
+    alignment: s.bounds ? 'keyframes' : 'grid',
     startSegment: s.startSeg,
     lastRequested: s.lastReq,
     highestSegment: highestSeg(s),
@@ -414,9 +425,10 @@ function copying(s) {
   return Boolean(s.plan.videoCopy && s.burn == null);
 }
 
-function buildArgs(s, seg, at = seg * SEG) {
+function buildArgs(s, seg, at = segStart(s, seg)) {
   const t = at;
   const [vin, vout] = videoArgs(s);
+  if (s.bounds) return keyframeArgs(s, seg, at, vin, vout);
   return [
     ...INPUT_FLAGS,
     ...vin,
@@ -458,6 +470,71 @@ function buildArgs(s, seg, at = seg * SEG) {
   ];
 }
 
+// A remux cut exactly at the source's keyframes. The segment muxer is told
+// every cut point (relative to where this run starts), so segment N always
+// begins on a keyframe at precisely the time the playlist gives it: Safari's
+// clock, the picture and the subtitles all agree, and any segment can be
+// decoded on its own after a seek. Each finished segment is listed in
+// ffmpeg.csv, which is what marks it complete (the segment muxer has no
+// temp_file).
+function keyframeArgs(s, seg, at, vin, vout) {
+  const cuts = s.bounds.slice(seg + 1).map((b) => (b - at).toFixed(3));
+  return [
+    ...INPUT_FLAGS,
+    ...vin,
+    ...(at > 0 ? ['-ss', at.toFixed(3)] : []),
+    '-i', s.url,
+    ...vout,
+    ...audioArgs(s),
+    '-sn', '-dn',
+    '-max_muxing_queue_size', '4096',
+    '-muxdelay', '0', '-muxpreload', '0',
+    '-output_ts_offset', at.toFixed(3),
+    '-f', 'segment',
+    '-segment_format', 'mpegts',
+    ...(cuts.length ? ['-segment_times', cuts.join(',')] : []),
+    '-segment_time_delta', '0.02',
+    '-segment_start_number', String(seg),
+    '-segment_list', path.join(s.dir, 'ffmpeg.csv'),
+    '-segment_list_type', 'csv',
+    '-reset_timestamps', '0',
+    path.join(s.dir, 'seg%d.ts'),
+  ];
+}
+
+// Where segment n starts, in film seconds.
+function segStart(s, n) {
+  if (!s.bounds) return n * SEG;
+  if (n < 0) return n * REMUX_SEG;
+  return s.bounds[Math.min(n, s.bounds.length - 1)];
+}
+
+// The segment that contains film time t.
+function segAt(s, t) {
+  if (!s.bounds) return Math.floor(t / SEG);
+  let lo = 0;
+  let hi = s.bounds.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (s.bounds[mid] <= t + 1e-6) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+// Pick up segments the segment muxer has finished since the last look.
+function refreshDone(s) {
+  if (!s.bounds) return;
+  let list;
+  try { list = fs.readFileSync(path.join(s.dir, 'ffmpeg.csv'), 'utf8'); } catch { return; }
+  for (const match of list.matchAll(/^seg(\d+)\.ts,/gm)) s.done.add(Number(match[1]));
+}
+
+// Segment n is on disk and complete.
+function segReady(s, n) {
+  if (s.bounds && !s.done.has(n)) return false;
+  return fs.existsSync(path.join(s.dir, `seg${n}.ts`));
+}
+
 const NOISE = /non-monotonous|non monotonic|Packet corrupt|PES packet|Last message repeated|no frame!|non-existing (SPS|PPS)|Could not find ref|\[h264 @|\[hevc @|\[aac @|\[ac3 @/i;
 const DEVICE_FAILURE = /Device creation failed|Cannot load|No device available|Failed to initialise VAAPI|CUDA_ERROR_NO_DEVICE|OpenEncodeSessionEx failed/i;
 
@@ -477,8 +554,9 @@ function highestSeg(s) {
     for (const f of segmentFiles(s.dir)) max = Math.max(max, Number(f.slice(3, -3)));
     return max;
   }
+  refreshDone(s);
   let i = s.startSeg;
-  while (fs.existsSync(path.join(s.dir, `seg${i}.ts`))) i += 1;
+  while (segReady(s, i)) i += 1;
   return i - 1;
 }
 
@@ -515,7 +593,7 @@ async function keyframeAtOrBefore(url, t) {
 // Start (or restart) ffmpeg so that segment `seg` is produced next. For a
 // remux this first moves the start back to the real keyframe.
 async function launchAt(s, seg) {
-  if (!copying(s) || seg === 0 || s.live) { launch(s, seg); return; }
+  if (!copying(s) || seg === 0 || s.live || s.bounds) { launch(s, seg); return; }
   const token = (s.launchToken = (s.launchToken || 0) + 1);
   const start = s.plan.startTime || 0;
   const k = Math.max(0, (await keyframeAtOrBefore(s.url, start + seg * SEG)) - start);
@@ -524,11 +602,15 @@ async function launchAt(s, seg) {
   launch(s, first, k);
 }
 
-function launch(s, seg, at = seg * SEG) {
+function launch(s, seg, at = segStart(s, seg)) {
   kill(s);
+  refreshDone(s);
   for (const f of fs.readdirSync(s.dir)) {
     if (f.startsWith('ffmpeg') || f.endsWith('.tmp')) fs.rmSync(path.join(s.dir, f), { force: true });
   }
+  // This run rewrites everything from seg on; until it has, none of it is
+  // complete.
+  if (s.bounds) for (const n of [...s.done]) if (n >= seg) s.done.delete(n);
   s.startSeg = seg;
   s.finished = false;
   s.paused = false;
@@ -594,10 +676,10 @@ function tick() {
     if (top !== s.seenTop) { s.seenTop = top; s.lastProgress = Date.now(); }
 
     if (running(s)) {
-      const ahead = s.live ? 0 : top - s.lastReq;
-      if (!s.paused && ahead >= AHEAD_SEGS) {
+      const ahead = s.live ? 0 : segStart(s, top) - segStart(s, s.lastReq);
+      if (!s.paused && ahead >= AHEAD_SEGS * SEG) {
         try { s.child.kill('SIGSTOP'); s.paused = true; } catch { /* gone */ }
-      } else if (s.paused && ahead < AHEAD_SEGS / 2) {
+      } else if (s.paused && ahead < (AHEAD_SEGS * SEG) / 2) {
         thaw(s);
       } else if (!s.paused && Date.now() - s.lastProgress > STALL_MS) {
         // Running, not frozen, producing nothing: the source stopped answering.
@@ -606,8 +688,13 @@ function tick() {
       }
     }
 
+    const keepFrom = segStart(s, s.lastReq) - KEEP_BEHIND_SEGS * SEG;
     for (const f of segmentFiles(s.dir)) {
-      if (Number(f.slice(3, -3)) < s.lastReq - KEEP_BEHIND_SEGS) fs.rmSync(path.join(s.dir, f), { force: true });
+      const n = Number(f.slice(3, -3));
+      if (segStart(s, n) < keepFrom) {
+        fs.rmSync(path.join(s.dir, f), { force: true });
+        s.done?.delete(n);
+      }
     }
   }
 }
@@ -631,6 +718,10 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   if (busy()) throw new Error('Too many conversions are already running.');
 
+  // A remux of Matroska is cut at its keyframes, so ask for them alongside
+  // the probe rather than after it.
+  const early = plan ? (/matroska/.test(String(plan.container)) ? keyframeIndex(url) : null)
+    : (/\.mkv(\?|$)/i.test(url) ? keyframeIndex(url) : null);
   const details = plan || await inspect(url);
   if (!details) throw new Error('The source could not be opened.');
   if (!details.hasVideo) throw new Error('There is no video in this file.');
@@ -643,6 +734,16 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   await fsp.mkdir(dir, { recursive: true });
 
   const exact = details.durationExact || 0;
+  let bounds = null;
+  if (exact && details.videoCopy && burn == null && /matroska/.test(String(details.container))) {
+    const found = await (early || keyframeIndex(url));
+    if (found) {
+      const start = details.startTime || 0;
+      const b = keyframes.boundaries(found.map((t) => t - start), exact, REMUX_SEG);
+      const gaps = b.map((t, i) => (b[i + 1] ?? exact) - t);
+      if (b.length >= 2 && Math.max(...gaps) <= MAX_GOP_SECS) bounds = b;
+    }
+  }
   const s = {
     sid,
     dir,
@@ -651,7 +752,11 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
     burn,
     plan: details,
     accel: hw.active(),
-    nseg: exact ? Math.ceil(exact / SEG) : 0,
+    nseg: bounds ? bounds.length : (exact ? Math.ceil(exact / SEG) : 0),
+    // Segment start times when cut at the source's keyframes; null for the
+    // fixed grid of SEG-second segments.
+    bounds,
+    done: new Set(),
     // No duration: a live channel (IPTV). Played as rolling live HLS — no
     // seeking, never paused or restarted somewhere else.
     live: !exact,
@@ -671,11 +776,10 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   sessions.set(sid, s);
   heartbeat(sid);
 
-  const first = s.nseg ? Math.min(Math.floor(Math.max(0, seek) / SEG), s.nseg - 1) : 0;
+  const first = s.nseg ? Math.min(segAt(s, Math.max(0, seek)), s.nseg - 1) : 0;
   s.lastReq = first;
   await launchAt(s, first);
 
-  const target = path.join(dir, `seg${first}.ts`);
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (s.dead) {
@@ -683,7 +787,8 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
         ? `ffmpeg couldn't convert this file: ${String(s.lastError).slice(0, 160)}`
         : 'The conversion stopped before it started.');
     }
-    if (fs.existsSync(target) || s.finished) {
+    refreshDone(s);
+    if (segReady(s, first) || s.finished) {
       const copying = details.videoCopy && burn == null;
       return {
         sid,
@@ -700,6 +805,7 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
         audioCodec: details.audioCodec,
         hdr: details.hdr,
         live: s.live,
+        alignment: bounds ? 'keyframes' : 'grid',
         encoder: copying ? 'copy' : s.accel.name,
         toneMapped: Boolean(details.hdr && !copying && toneMapperFor(s)),
       };
@@ -709,6 +815,18 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
 
   stop(sid);
   throw new Error('ffmpeg produced nothing in time. The source may be unreachable or too slow.');
+}
+
+const keyframeCache = new Map();
+
+function keyframeIndex(url) {
+  const cached = keyframeCache.get(url);
+  if (cached && Date.now() - cached.at < PROBE_TTL_MS) return cached.found;
+  const found = keyframes.matroska(url);
+  if (keyframeCache.size > 200) keyframeCache.clear();
+  keyframeCache.set(url, { at: Date.now(), found });
+  found.then((value) => { if (!value) keyframeCache.delete(url); });
+  return found;
 }
 
 function toneMapperFor(s) {
@@ -758,17 +876,20 @@ export function readPlaylist(sid) {
     }
   }
 
+  const lengths = [];
+  for (let i = 0; i < s.nseg; i += 1) {
+    const end = i + 1 < s.nseg ? segStart(s, i + 1) : s.durationExact;
+    lengths.push(Math.max(0.001, end - segStart(s, i)));
+  }
+  const target = s.bounds ? Math.ceil(Math.max(...lengths)) : SEG + 1;
   const lines = [
-    '#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${SEG + 1}`,
+    '#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${target}`,
     '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD',
   ];
-  // Only true when every segment starts on a keyframe, which a remux can't
-  // promise.
-  if (!copying(s)) lines.push('#EXT-X-INDEPENDENT-SEGMENTS');
-  for (let i = 0; i < s.nseg; i += 1) {
-    const len = Math.min(SEG, s.durationExact - i * SEG);
-    lines.push(`#EXTINF:${len.toFixed(3)},`, `/hls/${sid}/seg${i}.ts`);
-  }
+  // Only true when every segment starts on a keyframe: always for a
+  // conversion and a keyframe-cut remux, never for a remux on the grid.
+  if (!copying(s) || s.bounds) lines.push('#EXT-X-INDEPENDENT-SEGMENTS');
+  lengths.forEach((len, i) => lines.push(`#EXTINF:${len.toFixed(3)},`, `/hls/${sid}/seg${i}.ts`));
   lines.push('#EXT-X-ENDLIST');
   return `${lines.join('\n')}\n`;
 }
@@ -793,14 +914,16 @@ export async function segment(sid, file) {
   thaw(s);
 
   const target = path.join(s.dir, file);
-  if (fs.existsSync(target)) return { path: target };
+  refreshDone(s);
+  if (segReady(s, n)) return { path: target };
 
-  const lookahead = copying(s) ? COPY_LOOKAHEAD_SEGS : LOOKAHEAD_SEGS;
+  const lookahead = (copying(s) ? COPY_LOOKAHEAD_SEGS : LOOKAHEAD_SEGS) * SEG;
   if (s.live) {
     // Live only ever moves forward; a stopped encoder picks up numbering
     // where it left off, at "now".
     if (!running(s)) launch(s, highestSeg(s) + 1);
-  } else if (n < s.startSeg || n > highestSeg(s) + lookahead || (!running(s) && !s.finished)) {
+  } else if (n < s.startSeg || segStart(s, n) > segStart(s, highestSeg(s)) + lookahead
+    || (!running(s) && !s.finished)) {
     await launchAt(s, n);
   } else if (s.finished) {
     // ffmpeg reached the end but this one is missing (deleted, or a gap).
@@ -810,8 +933,9 @@ export async function segment(sid, file) {
   const deadline = Date.now() + SEGMENT_WAIT_MS;
   while (Date.now() < deadline) {
     if (s.dead) return { status: 410, error: 'The conversion failed.' };
-    if (fs.existsSync(target)) return { path: target };
-    if (s.finished && !fs.existsSync(target)) {
+    refreshDone(s);
+    if (segReady(s, n)) return { path: target };
+    if (s.finished && !segReady(s, n)) {
       return { status: 404, error: 'Past the end of the film.' };
     }
     await new Promise((resolve) => { setTimeout(resolve, 100); });
@@ -829,11 +953,12 @@ export function prepare(sid, seconds) {
   const s = sessions.get(sid);
   if (!s || !Number.isFinite(seconds)) return false;
   heartbeat(sid);
-  const n = Math.max(0, Math.floor(seconds / SEG));
+  const n = Math.max(0, segAt(s, seconds));
   if (s.nseg && n >= s.nseg) return false;
-  if (fs.existsSync(path.join(s.dir, `seg${n}.ts`))) return true;
-  const lookahead = copying(s) ? COPY_LOOKAHEAD_SEGS : LOOKAHEAD_SEGS;
-  const covered = n >= s.startSeg && n <= highestSeg(s) + lookahead && running(s);
+  refreshDone(s);
+  if (segReady(s, n)) return true;
+  const lookahead = (copying(s) ? COPY_LOOKAHEAD_SEGS : LOOKAHEAD_SEGS) * SEG;
+  const covered = n >= s.startSeg && segStart(s, n) <= segStart(s, highestSeg(s)) + lookahead && running(s);
   if (!covered) {
     s.lastReq = n;
     thaw(s);

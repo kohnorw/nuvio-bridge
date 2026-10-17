@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=85';
-import * as controls from './controls.js?v=85';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=86';
+import * as controls from './controls.js?v=86';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -503,6 +503,10 @@ async function load(gen, { src, type, resumeAt }) {
   }
 
   const hls = new Hls({
+    // Ask for the resume point's segment first. Starting at 0 and seeking
+    // once the metadata arrived made the server restart ffmpeg twice — at 0,
+    // then back where it had already been — before anything played.
+    startPosition: resumeAt > 0 ? resumeAt : -1,
     maxBufferLength: 30,
     maxMaxBufferLength: 120,
     // Keep three minutes behind the playhead in memory, so scrubbing back a
@@ -541,7 +545,8 @@ function seekWithin(seconds) {
   let limit = Number.isFinite(video.duration) ? video.duration : Infinity;
   if (seekable?.length) limit = Math.min(limit, seekable.end(seekable.length - 1) - 2);
   const target = Math.max(0, Math.min(seconds, limit));
-  if (target > 0) video.currentTime = target;
+  // Already there (hls.js started at it): a seek would only flush the buffer.
+  if (target > 0 && Math.abs(video.currentTime - target) > 1) video.currentTime = target;
 }
 
 function onPlaybackError(err) {
