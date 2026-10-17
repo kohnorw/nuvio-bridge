@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=91';
-import * as controls from './controls.js?v=91';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=92';
+import * as controls from './controls.js?v=92';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -821,19 +821,27 @@ function startItemSubtitles(gen) {
 // subtitle the playlist came with, then a matching track inside the file.
 function chooseDefaultSubtitle() {
   if (state.subtitlesOff || state.subtitleTouched || state.subtitle) return;
-  if (!state.addonLoaded) return; // decided once the addon list is in
 
+  // 1. A track inside the file, in the person's language: made for this
+  //    exact release, so always in sync. Doesn't wait for the addons.
+  if (Number.isInteger(state.embeddedDefault)) {
+    const track = (state.embeddedSubs || []).find((t) => t.stream === state.embeddedDefault && t.url);
+    if (track) {
+      state.subtitle = { key: `e${track.stream}`, url: track.url, label: track.label, lang: track.lang, pgs: track.render === 'pgs' };
+      renderSubtitleMenu();
+      syncSubtitles();
+      return;
+    }
+  }
+
+  // 2. OpenSubtitles in that language, then any other addon's.
+  if (!state.addonLoaded) return; // decided once the addon list is in
   const addons = state.addonSubs || [];
   const index = addons.findIndex((sub) => sub.matches && sub.openSubtitles);
   const pick = index >= 0 ? index : addons.findIndex((sub) => sub.matches);
   if (pick >= 0) {
     const sub = addons[pick];
     state.subtitle = { key: `a${pick}`, url: sub.url, label: sub.label, lang: sub.lang };
-  } else if (!current()?.subtitle && Number.isInteger(state.embeddedDefault)) {
-    const track = (state.embeddedSubs || []).find((t) => t.stream === state.embeddedDefault && t.url);
-    if (track) {
-      state.subtitle = { key: `e${track.stream}`, url: track.url, label: track.label, lang: track.lang, pgs: track.render === 'pgs' };
-    }
   }
   renderSubtitleMenu();
   syncSubtitles();
@@ -1066,9 +1074,50 @@ function syncSubtitles() {
     track.dataset.shifted = String(state.subDelay || 0);
     track.track.mode = 'showing';
     if (/Loading subtitles/.test($('#watch-status')?.textContent || '')) setStatus('');
+    autoSync(track, chosen);
   }, { once: true });
   track.addEventListener('error', () => setStatus('Those subtitles couldn’t be loaded.'), { once: true });
   track.track.mode = 'showing';
+}
+
+// Subtitles from addons are often made for a different release of the film:
+// a longer intro, or 25 fps instead of 23.976. Once one has loaded, the
+// server compares it with the film's dialogue (src/subsync.js) and, if it
+// finds a confident correction, the cues are retimed in place. The manual
+// timing in the Subtitles menu still works on top. Subtitles inside the file
+// are made for this file and are left alone.
+async function autoSync(trackEl, chosen) {
+  const item = current();
+  const gen = state.gen;
+  if (!item?.transcodeKey || !String(chosen.url || '').startsWith('/sub.vtt')) return;
+  if ($('#watch-stage')?.classList.contains('is-live')) return;
+  let result;
+  try {
+    result = await post('/api/subtitles/sync', {
+      sub: chosen.url,
+      media: item.transcodeKey,
+      audio: state.session?.audio || 0,
+    });
+  } catch (err) {
+    note(`subtitle sync: ${err.message}`);
+    return;
+  }
+  if (isStale(gen) || !trackEl.isConnected || !trackEl.track?.cues) return;
+  note(`subtitle sync: ${result.applied ? 'applied' : 'skipped'} offset ${result.offset}s scale ${result.scale.toFixed(4)} score ${result.score} (was ${result.before})${result.reason ? ` — ${result.reason}` : ''}`);
+  if (!result.applied) return;
+  // Cues currently carry the manual delay; correct the original times and
+  // put the delay back on top.
+  const delay = state.subDelay || 0;
+  for (const cue of Array.from(trackEl.track.cues)) {
+    const start = Math.max(0, (cue.startTime - delay) * result.scale + result.offset + delay);
+    const end = (cue.endTime - delay) * result.scale + result.offset + delay;
+    cue.startTime = start;
+    cue.endTime = Math.max(start + 0.05, end);
+  }
+  const sign = result.offset >= 0 ? '+' : '−';
+  const speed = result.scale !== 1 ? ', frame rate corrected' : '';
+  setStatus(`Subtitles synced to the audio (${sign}${Math.abs(result.offset).toFixed(1)} s${speed}).`);
+  setTimeout(() => { if (/Subtitles synced/.test($('#watch-status')?.textContent || '')) setStatus(''); }, 4000);
 }
 
 // Subtitles inside the file used to wait for the server to read the whole

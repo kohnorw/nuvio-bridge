@@ -14,6 +14,8 @@ import * as playlists from './playlist.js';
 import * as languages from './languages.js';
 import * as progress from './progress.js';
 import * as vlcLauncher from './vlclauncher.js';
+import * as subsync from './subsync.js';
+import crypto from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
@@ -1444,6 +1446,46 @@ app.get('/sub.vtt', async (req, res) => {
     return res.send(subtitlesLib.convert(subtitlesLib.decode(bytes, url)));
   } catch {
     return res.status(504).type('text/plain').send('The subtitle host did not answer.');
+  }
+});
+
+// Subtitle sync (see src/subsync.js): the correction that lines an addon's
+// subtitle up with this film's dialogue. Worked out once per film and
+// subtitle — a few seconds of reading the soundtrack — and remembered, so
+// everyone who plays that pair afterwards gets it at once.
+const syncResults = new Map();
+
+app.post('/api/subtitles/sync', requireUser, async (req, res) => {
+  if (!transcode.isAvailable()) return res.status(404).json({ error: 'ffmpeg is not in this build.' });
+  const media = await signing.verify(req.body?.media?.u, req.body?.media?.s);
+  let subUrl = null;
+  try {
+    const sub = new URL(String(req.body?.sub || ''), 'http://local');
+    if (sub.pathname === '/sub.vtt') subUrl = await signing.verify(sub.searchParams.get('u'), sub.searchParams.get('s'));
+  } catch { /* not a subtitle link */ }
+  if (!media || !subUrl) return res.status(403).json({ error: 'Expired or invalid link.' });
+  const audio = Math.max(0, Number(req.body?.audio) || 0);
+
+  const key = crypto.createHash('sha1').update(`${media}\n${subUrl}\n${audio}`).digest('hex');
+  let job = syncResults.get(key);
+  if (!job) {
+    job = (async () => {
+      const [details, upstream] = await Promise.all([
+        transcode.inspect(media),
+        fetch(subUrl, { redirect: 'follow', signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) }),
+      ]);
+      if (!upstream.ok) throw new Error('The subtitle host refused that.');
+      const vtt = subtitlesLib.convert(subtitlesLib.decode(new Uint8Array(await upstream.arrayBuffer()), subUrl));
+      return subsync.sync({ url: media, audio, duration: details?.durationExact, vtt });
+    })();
+    if (syncResults.size > 1000) syncResults.clear();
+    syncResults.set(key, job);
+    job.catch(() => syncResults.delete(key));
+  }
+  try {
+    return res.json(await job);
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
   }
 });
 

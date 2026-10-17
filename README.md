@@ -265,6 +265,9 @@ The subtitle menu combines two sources:
 | `TRANSCODE_PRESET` | by core count | x264 preset, for re-encodes only. Unset picks from the core count. |
 | `TRANSCODE_MAX_HEIGHT` | `1080` | Encode height ceiling. The biggest lever on speed. 0 encodes at source height. |
 | `TRANSCODE_SEGMENT_SECS` | `2` | Segment length. Shorter starts faster and costs more requests. |
+| `SUBSYNC_WINDOWS` | `8` | Subtitle sync: how many stretches of the soundtrack are listened to. More is surer and reads more of the film. |
+| `SUBSYNC_WINDOW_SECS` | `45` | Subtitle sync: length of each stretch, in seconds. |
+| `SUBSYNC_MAX_OFFSET` | `90` | Subtitle sync: the largest timing correction it will look for, in seconds. |
 | `TRANSCODE_REMUX_SEGMENT_SECS` | `4` | Shortest segment for a remux of an MKV, which is cut at the file's own keyframes. Fewer, larger requests keep iPhones buffered over the internet. |
 | `TRANSCODE_AHEAD_SECS` | `90` | How far ahead of the viewer to convert before pausing ffmpeg. Raise it if a slow source causes buffering. |
 | `TRANSCODE_CRF` | `23` | Quality for re-encodes (CRF/CQ/QP depending on the encoder). Lower is better and bigger. |
@@ -687,6 +690,7 @@ src/languages.js  language codes, subtitle matching, release-name hints
 src/addons.js     Stremio addon protocol — manifests, catalogs, search, meta, streams
 src/http.js       the web layer — routing, cookies, JSON bodies, static, gzip
 src/transcode.js  ffmpeg — HLS sessions, remux or re-encode, for the browser
+src/subsync.js   subtitle sync — lines addon subtitles up with the film's dialogue
 src/keyframes.js  Matroska keyframe index (Cues), so a remux is cut where the file's keyframes are
 public/vendor/    hls.js, for browsers without native HLS (Chrome, Firefox)
 src/players.js    per-platform hand-off: vlc-x-callback://, intent://, .m3u
