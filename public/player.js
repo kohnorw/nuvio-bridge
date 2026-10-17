@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=97';
-import * as controls from './controls.js?v=97';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=98';
+import * as controls from './controls.js?v=98';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -266,8 +266,16 @@ function loadHlsJs() {
   return hlsPromise;
 }
 
+// Safari plays HLS itself, and on an iPhone it has to. Chromium browsers
+// (Chrome, Edge, Brave) have recently started saying they can too, but their
+// built-in player ignores the start position and resumes slowly; hls.js does
+// it far better there. So the built-in player is used only by Apple's
+// browsers, or where hls.js can't run at all.
 function nativeHls(video) {
-  return Boolean(video.canPlayType('application/vnd.apple.mpegurl'));
+  if (!video.canPlayType('application/vnd.apple.mpegurl')) return false;
+  const apple = /Apple/.test(navigator.vendor || '');
+  const mse = typeof window.MediaSource !== 'undefined' || typeof window.ManagedMediaSource !== 'undefined';
+  return apple || !mse;
 }
 
 async function createPlayer() {
@@ -368,7 +376,7 @@ async function play(next, opts = {}) {
   updateNav();
   loadSources(gen);
   resetVideo();
-  if (newItem) startItemSubtitles(gen);
+  if (newItem) startItemSubtitles();
   setStatus('Preparing the stream…');
 
   // Where to start: an explicit position, else this tab's own memory, else
@@ -847,7 +855,7 @@ function renderHeading(item) {
 // the track on screen, the choice made for that file, the lists — and this
 // one's are fetched. What carries over is the person's intent: the language
 // they picked, or that they turned subtitles off.
-function startItemSubtitles(gen) {
+function startItemSubtitles() {
   state.subtitle = null;
   state.subtitleTouched = false;
   state.addonSubs = [];
@@ -862,7 +870,6 @@ function startItemSubtitles(gen) {
   state.video?.querySelectorAll('track').forEach((t) => t.remove());
   disposePgs();
   renderSubtitleMenu();
-  loadSubtitleMenu(gen);
 }
 
 // Subtitles are on by default, from OpenSubtitles, in the person's language
@@ -878,27 +885,12 @@ function embeddedKnown() {
 function chooseDefaultSubtitle() {
   if (state.subtitlesOff || state.subtitleTouched || state.subtitle) return;
   if (state.embeddedKnown === false) return;
-
-  // 1. A track inside the file, in the person's language: made for this
-  //    exact release, so always in sync. Doesn't wait for the addons.
-  if (Number.isInteger(state.embeddedDefault)) {
-    const track = (state.embeddedSubs || []).find((t) => t.stream === state.embeddedDefault && t.url);
-    if (track) {
-      state.subtitle = { key: `e${track.stream}`, url: track.url, label: track.label, lang: track.lang, pgs: track.render === 'pgs' };
-      renderSubtitleMenu();
-      syncSubtitles();
-      return;
-    }
-  }
-
-  // 2. OpenSubtitles in that language, then any other addon's.
-  if (!state.addonLoaded) return; // decided once the addon list is in
-  const addons = state.addonSubs || [];
-  const index = addons.findIndex((sub) => sub.matches && sub.openSubtitles);
-  const pick = index >= 0 ? index : addons.findIndex((sub) => sub.matches);
-  if (pick >= 0) {
-    const sub = addons[pick];
-    state.subtitle = { key: `a${pick}`, url: sub.url, label: sub.label, lang: sub.lang };
+  // The server's pick of the file's own tracks (bestSubtitle in server.js):
+  // the person's language, full rather than forced, text before pictures.
+  // It sends none when subtitles are off in Settings.
+  const track = (state.embeddedSubs || []).find((t) => t.stream === state.embeddedDefault && t.url);
+  if (track) {
+    state.subtitle = { key: `e${track.stream}`, url: track.url, label: track.label, lang: track.lang, pgs: track.render === 'pgs' };
   }
   renderSubtitleMenu();
   syncSubtitles();
@@ -1274,14 +1266,10 @@ function syncSubtitles() {
   video.querySelectorAll('track').forEach((t) => t.remove());
   disposePgs();
   stopLiveSubs();
-  if (state.subtitlesOff) return;
+  if (state.subtitlesOff) { silenceTextTracks(); return; }
 
-  // The playlist's own (addon) subtitle only once it's known the file has
-  // none of its own to prefer.
-  const fileHasSubs = state.embeddedKnown === false || (state.embeddedSubs || []).some((t) => t.url);
-  const chosen = state.subtitle
-    || (!fileHasSubs && current()?.subtitle && { url: current().subtitle, label: 'Addon subtitles' });
-  if (!chosen) return;
+  const chosen = state.subtitle;
+  if (!chosen) { silenceTextTracks(); return; }
 
   if (chosen.pgs) {
     loadPgs(chosen);
@@ -1434,6 +1422,24 @@ async function loadLiveSubs(chosen) {
   }
 }
 
+// With nothing chosen, nothing shows — including tracks the browser turned
+// on by itself: Safari enables a subtitle track that matches the phone's
+// language under Accessibility → Subtitles & Captioning. Kept off for as
+// long as nothing is chosen.
+function silenceTextTracks() {
+  const { video } = state;
+  if (!video) return;
+  for (const t of Array.from(video.textTracks || [])) t.mode = 'disabled';
+  if (video.dataset.silenced) return;
+  video.dataset.silenced = '1';
+  const enforce = () => {
+    if (state.subtitle && !state.subtitlesOff) return;
+    for (const t of Array.from(video.textTracks || [])) if (t.mode !== 'disabled') t.mode = 'disabled';
+  };
+  video.textTracks?.addEventListener?.('change', enforce);
+  video.textTracks?.addEventListener?.('addtrack', enforce);
+}
+
 // Blu-ray (PGS) subtitles are pictures. Rather than burning them into the
 // video on the server — a full re-encode — the track is copied out as-is and
 // drawn over the picture here, in a worker, by libpgs.
@@ -1458,42 +1464,22 @@ async function loadPgs(chosen) {
   }
 }
 
-async function loadSubtitleMenu(gen = state.gen) {
-  const { type } = state.ticket || {};
-  const id = current()?.id || state.ticket?.id;
-  if (!type || !id) { state.addonLoaded = true; chooseDefaultSubtitle(); return; }
-  try {
-    const lang = state.subLangChoice ? `?lang=${encodeURIComponent(state.subLangChoice)}` : '';
-    const list = await request(`/api/subtitles/${encodeURIComponent(type)}/${encodeURIComponent(id)}${lang}`);
-    if (gen !== state.gen && state.loadedIndex !== state.index) return;
-    if (current()?.id && current().id !== id) return; // moved on to another episode
-    state.addonSubs = Array.isArray(list) ? list : [];
-  } catch {
-    state.addonSubs = [];
-  }
-  state.addonLoaded = true;
-  renderSubtitleMenu();
-  chooseDefaultSubtitle();
-}
-
 // One menu: subtitles inside the file (text, and Blu-ray PGS drawn by the
 // player) and subtitles from addons. Switching never restarts the video.
 function renderSubtitleMenu() {
   const wrap = $('#watch-subs-wrap');
   const select = $('#watch-subs');
   // Only tracks the browser can show: text, and PGS (drawn by the player).
+  // Only the file's own tracks: made for this release, so always in sync.
   const embedded = (state.embeddedSubs || []).filter((t) => t.url);
-  const addons = state.addonSubs || [];
 
   select.replaceChildren(option('', 'Off'));
-  if (current()?.subtitle) select.append(option('__item', 'Default'));
   embedded.forEach((sub) => select.append(option(`e${sub.stream}`, sub.label)));
-  addons.forEach((sub, i) => select.append(option(`a${i}`, `${sub.label}${sub.addon ? ` · ${sub.addon}` : ''}`)));
   wrap.hidden = select.options.length < 2;
 
   if (state.subtitlesOff) select.value = '';
   else if (state.subtitle?.key && [...select.options].some((o) => o.value === state.subtitle.key)) select.value = state.subtitle.key;
-  else select.value = current()?.subtitle ? '__item' : '';
+  else select.value = '';
 
   select.onchange = () => {
     state.subtitleTouched = true;
@@ -1504,10 +1490,6 @@ function renderSubtitleMenu() {
     state.subtitlesOff = value === '';
     state.subtitle = null;
     if (sub) state.subtitle = { key: value, url: sub.url, label, lang: sub.lang, pgs: sub.render === 'pgs' };
-    if (value.startsWith('a')) {
-      const chosen = addons[Number(value.slice(1))];
-      state.subtitle = { key: value, url: chosen.url, label, lang: chosen.lang };
-    }
     // Carried to the next episode: the language, or that they're off.
     if (state.subtitle?.lang) state.subLangChoice = state.subtitle.lang;
 

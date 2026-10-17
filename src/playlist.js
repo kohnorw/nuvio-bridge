@@ -50,7 +50,7 @@ function prune() {
 }
 
 export async function create({
-  sid, type, seriesId, episodes, quality, audioLang, subLang, firstStream, label,
+  sid, type, seriesId, episodes, quality, audioLang, subLang, subsOff = false, firstStream, label,
 }) {
   await ready();
   prune();
@@ -64,6 +64,7 @@ export async function create({
     quality,
     audioLang,         // ISO 639-1, or empty for no preference
     subLang,
+    subsOff,           // Settings → Subtitles off: VLC shows none, not even the file's default
     firstStream,       // a hand-picked stream for episode one, if there was one
     label,             // what to call this in a player's title bar
     rendered: null,
@@ -128,10 +129,14 @@ export function render(entries) {
 // Only `name=value` options go here. A bare flag with no value is not valid in
 // an #EXTVLCOPT line, and an option VLC can't parse can make it reject the
 // whole item and move to the next one.
-export function optionsFor({ audioLang, subLang, subtitleUrl }) {
+export function optionsFor({ audioLang, subLang, subtitleUrl, subsOff = false }) {
   const options = [];
   if (audioLang) options.push(`audio-language=${audioLang}`);
-  if (subLang) options.push(`sub-language=${subLang}`);
+  // Off means off: VLC otherwise turns on whatever track the file marks as
+  // default, which is why subtitles appeared with the setting switched off.
+  // ('none' is VLC's word for "no subtitle track, and no fallback".)
+  if (subsOff) options.push('sub-language=none', 'no-sub-autodetect-file');
+  else if (subLang) options.push(`sub-language=${subLang}`);
   // input-slave is how libvlc side-loads a subtitle track onto a stream. Only
   // ever set this to a URL that has been checked — an unreachable slave can
   // fail the item it's attached to.

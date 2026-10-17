@@ -700,7 +700,7 @@ app.get('/play', async (req, res, next) => {
     // vlc-x-callback has no parameters for track languages, so anything with a
     // language preference goes through a one-entry playlist instead — that's
     // the only channel that carries #EXTVLCOPT.
-    if (!plan.playlistToken && user && (prefs.audioLang || prefs.subLang) && type && id) {
+    if (!plan.playlistToken && user && (prefs.audioLang || prefs.subLang || prefs.subsOff) && type && id) {
       plan.playlistToken = await singleTrackPlaylist(user, {
         type, id, prefs,
         stream: { url: mediaUrl, filename: req.query.filename },
@@ -744,7 +744,7 @@ const DEFAULT_PREFS = {
 // nothing — VLC playlists, the player's default track — turns them on.
 function playbackPrefs(user) {
   const prefs = { ...DEFAULT_PREFS, ...(user?.prefs || {}) };
-  return prefs.subtitles === false ? { ...prefs, subLang: '' } : prefs;
+  return prefs.subtitles === false ? { ...prefs, subLang: '', subsOff: true } : prefs;
 }
 
 // Everything playable, best first: the quality preference floats to the top,
@@ -899,7 +899,7 @@ app.get('/play/auto/:type/:id', requireUser, async (req, res, next) => {
         const label = episodes[0].show || 'Nuvio';
         const token = await playlists.create({
           sid: req.user.sid, type, seriesId: id, episodes, quality: prefs.quality,
-          audioLang: prefs.audioLang, subLang: prefs.subLang, label,
+          audioLang: prefs.audioLang, subLang: prefs.subLang, subsOff: Boolean(prefs.subsOff), label,
         });
         return deliver(req, res, { playlistToken: token, type, id, title: label });
       }
@@ -921,7 +921,7 @@ app.get('/play/auto/:type/:id', requireUser, async (req, res, next) => {
     // vlc-x-callback has no parameters for track languages, so anything with a
     // language preference goes through a one-entry playlist instead — that's
     // the only channel that carries #EXTVLCOPT.
-    if (prefs.audioLang || prefs.subLang) {
+    if (prefs.audioLang || prefs.subLang || prefs.subsOff) {
       const token = await singleTrackPlaylist(req.user, {
         type, id, prefs, stream: chosen.stream, addons,
       });
@@ -949,11 +949,12 @@ async function singleTrackPlaylist(user, { type, id, prefs, stream, addons }) {
     audioLang: languages.toVlc(prefs.audioLang),
     subLang: languages.toVlc(prefs.subLang),
     subtitleUrl,
+    subsOff: Boolean(prefs.subsOff),
   });
 
   const token = await playlists.create({
     sid: user.sid, type, seriesId: id, episodes: [], quality: prefs.quality,
-    audioLang: prefs.audioLang, subLang: prefs.subLang,
+    audioLang: prefs.audioLang, subLang: prefs.subLang, subsOff: Boolean(prefs.subsOff),
     label: stream.filename || stream.headline || 'Nuvio',
   });
   await playlists.setRendered(token, playlists.render([{
@@ -996,7 +997,7 @@ async function materialize(record) {
     const resolved = await Promise.all(record.episodes.map(async (ep, index) => {
       const label = episodeTitle(ep);
       const subtitleUrl = await findSubtitle(addons, 'series', ep.id, record.subLang);
-      const options = playlists.optionsFor({ audioLang, subLang, subtitleUrl });
+      const options = playlists.optionsFor({ audioLang, subLang, subtitleUrl, subsOff: Boolean(record.subsOff) });
 
       // The stream picked by hand leads, untouched — no second-guessing it.
       if (index === 0 && record.firstStream) {
@@ -1094,20 +1095,11 @@ function sendPlaylist(res, rendered, { download = false, name = 'nuvio' } = {}) 
 
 // A subtitle addon's best match for the preferred language, if any. Failure
 // is silent: subtitles are a nicety and shouldn't stop a playlist rendering.
-async function findSubtitle(addons, type, id, code) {
-  if (!code) return null;
-  try {
-    const all = await addonsApi.subtitles(addons, type, id);
-    const match = all.find((sub) => languages.subtitleMatches(sub.lang, code));
-    if (!match) return null;
-
-    // An unreachable input-slave can fail the item it's attached to, which
-    // would make VLC skip an episode over a missing subtitle file. Only
-    // attach one that answers.
-    return (await probe(match.url)) === 'dead' ? null : match.url;
-  } catch {
-    return null;
-  }
+// Subtitles from addons (OpenSubtitles and the like) are no longer used:
+// only the tracks inside the file, which are made for that exact release.
+// Kept as a function so the playlist code reads the same.
+async function findSubtitle() {
+  return null;
 }
 
 // The episode after this one, for the built-in player: at the end of an
@@ -1541,16 +1533,10 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       const match = (plan?.audioTracks || []).find((t) => languages.trackMatches(t.lang, prefs.audioLang));
       if (match) audioIndex = match.index;
     }
-    // The subtitle track inside the file to turn on by default: text first
-    // (drawn by the browser, free), an image track only if nothing else.
-    let preferredSubtitle = null;
-    if (prefs.subLang) {
-      const inLang = (plan?.subtitleTracks || [])
-        .filter((t) => t.render && languages.trackMatches(t.lang, prefs.subLang));
-      const pick = inLang.find((t) => t.render === 'text' && !t.forced)
-        || inLang.find((t) => !t.forced) || inLang[0];
-      if (pick) preferredSubtitle = pick.stream;
-    }
+    // The subtitle track inside the file to turn on by default — only with
+    // subtitles switched on in Settings. See bestSubtitle.
+    const preferredSubtitle = prefs.subsOff ? null
+      : bestSubtitle(plan?.subtitleTracks, prefs.subLang, { nativePlayer: req.body?.nativeHls === true });
     const subtitleTracks = await subtitleLinks(plan?.subtitleTracks, url);
 
     // If the browser can play the file as it stands, restream it instead of
@@ -1620,6 +1606,33 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
     return res.status(503).json({ error: err.message });
   }
 });
+
+// The most suitable subtitle track inside a file, or null. In order:
+//   - in the language from Settings, when one is set and the file has it
+//   - full subtitles, not a forced track (those only cover foreign-language
+//     bits) and not commentary or signs-and-songs
+//   - text over pictures: text is drawn everywhere, iPhone fullscreen
+//     included, while Blu-ray PGS is drawn by the page and can't be shown in
+//     Safari's own fullscreen player
+//   - the file's own default, then plain over SDH, then file order
+function bestSubtitle(tracks, lang, { nativePlayer = false } = {}) {
+  const usable = (tracks || []).filter((t) => t.render);
+  if (!usable.length) return null;
+  const score = (t) => {
+    const title = String(t.label || '');
+    let n = 0;
+    if (lang && languages.trackMatches(t.lang, lang)) n += 1000;
+    if (t.forced || /forced/i.test(title)) n -= 400;
+    if (/commentary|signs?\b|songs?\b/i.test(title)) n -= 300;
+    if (t.render === 'text') n += nativePlayer ? 120 : 60;
+    if (t.default) n += 20;
+    if (/\bSDH\b|hearing|\bCC\b/i.test(title)) n -= 5;
+    return n;
+  };
+  let best = usable[0];
+  for (const t of usable) if (score(t) > score(best)) best = t;
+  return best.stream;
+}
 
 // Subtitles inside the file, for the player's menu. Text ones get a signed
 // link to their WebVTT; image ones are listed so they can be burned in.
