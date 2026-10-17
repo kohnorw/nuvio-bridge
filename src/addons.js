@@ -472,7 +472,7 @@ function normalizeMeta(m) {
   };
 }
 
-function normalizeStream(s, addonName) {
+export function normalizeStream(s, addonName) {
   const headline = (s.name || '').replace(/\s+/g, ' ').trim();
   const detail = [s.title, s.description].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   const label = [headline, detail].filter(Boolean).join(' • ');
@@ -499,7 +499,9 @@ function normalizeStream(s, addonName) {
     // Whether a browser could play this one as it stands, guessed from the
     // release name. See browserVerdict for what that guess is worth.
     browser: playable ? browserVerdict(`${label} ${filename || ''}`, url) : 'no',
-    score: scoreStream(label, playable),
+    // A file the browser can play as it stands needs no work at all.
+    score: scoreStream(label, playable, filename)
+      + (playable && browserVerdict(`${label} ${filename || ''}`, url) === 'yes' ? 6 : 0),
   };
 }
 
@@ -560,17 +562,65 @@ function badgesFor(text) {
   return out.slice(0, 6);
 }
 
-function scoreStream(label, playable) {
+// How good a stream is to *play*, not to collect. The old score rewarded
+// what looks best on paper — REMUX, HDR, Dolby Vision — which are exactly the
+// files that play worst here: REMUXes run 25–40 Mbps and choke a phone
+// connection, HDR needs tone mapping on the way through, and Dolby Vision
+// without an HDR10 base comes out purple and green on anything but a DV
+// screen. This ranks for what plays smoothly everywhere, as Plex would pick:
+//
+//   1. it will actually start: a cached debrid link, not one that triggers a
+//      download (Torrentio, Comet, MediaFusion and friends mark them)
+//   2. 1080p, then 720p; 4K only if allowed and nothing better
+//   3. cheap to deliver: H.264 (remuxed for almost nothing) over HEVC/AV1
+//      (a full conversion), SDR over HDR, MP4 the browser plays as it is
+//   4. a sensible size for its resolution — WEB-DLs and good encodes over
+//      40 GB discs and 300 MB squashes
+//   5. never CAMs, telesyncs, samples or hard-coded subtitles
+function scoreStream(label, playable, filename = '') {
   if (!playable) return -1000;
-  const text = label.toLowerCase();
+  const text = `${label} ${filename || ''}`.toLowerCase();
   let score = 0;
-  if (/2160|4k|uhd/.test(text)) score += 40;
-  else if (/1080/.test(text)) score += 30;
-  else if (/720/.test(text)) score += 15;
-  if (/remux/.test(text)) score += 12;
-  if (/bluray|blu-ray/.test(text)) score += 8;
-  if (/hdr|dolby.?vision|dv\b/.test(text)) score += 6;
-  if (/cam|telesync|\bts\b|hdts/.test(text)) score -= 60;
+
+  // 1. Will it start?
+  if (/\[(rd|ad|pm|dl|tb|ed|oc|pkp|en)\+\]|⚡|\bcached\b|\binstant\b/.test(text)) score += 40;
+  if (/\[(rd|ad|pm|dl|tb|ed|oc|pkp|en) ?download\]|⏳|\buncached\b|\bnot cached\b/.test(text)) score -= 90;
+
+  // 2. Resolution.
+  const height = /2160|\b4k\b|uhd/.test(text) ? 2160
+    : /1080/.test(text) ? 1080 : /720/.test(text) ? 720 : /\b(576|480)p?\b/.test(text) ? 480 : null;
+  score += { 2160: 22, 1080: 30, 720: 18, 480: 6 }[height] ?? 12;
+
+  // 3. Cost to deliver.
+  if (/\b(x264|h\.?264|avc)\b/.test(text)) score += 12;
+  else if (/\b(x265|h\.?265|hevc)\b/.test(text)) score += 0;
+  else if (/\bav1\b/.test(text)) score -= 8;
+  if (/\b10.?bit\b|\bhi10p?\b/.test(text)) score -= 6;
+  const dv = /dolby.?vision|\bdovi\b|\bdv\b/.test(text);
+  const hdr = /\bhdr(10)?\+?\b/.test(text);
+  if (dv && !hdr) score -= 25;
+  else if (dv || hdr) score -= 6;
+  if (/\.(mp4|m4v)\b|\bmp4\b/.test(text)) score += 4;
+  if (/\baac\b/.test(text)) score += 4;
+  if (/truehd|atmos|dts-?hd|dts-?x/.test(text)) score -= 4;
+
+  // 4. Source and size.
+  if (/remux/.test(text)) score -= 10;
+  else if (/web-?dl|webrip|\bweb\b/.test(text)) score += 8;
+  else if (/blu-?ray|bdrip|brrip/.test(text)) score += 5;
+  const size = text.match(/(\d+(?:\.\d+)?)\s?(gb|mb)\b/);
+  if (size) {
+    const gb = Number(size[1]) / (size[2] === 'mb' ? 1024 : 1);
+    const big = height === 2160 ? 40 : height === 720 ? 6 : 15;
+    if (gb > big * 1.6) score -= 15;
+    else if (gb > big) score -= 6;
+    if (height >= 1080 && gb < 0.5) score -= 6;
+  }
+
+  // 5. Never these.
+  if (/\bcam(rip)?\b|telesync|\bhdts\b|\bts(rip)?\b|\bhdcam\b|\btc\b|telecine/.test(text)) score -= 80;
+  if (/\bsample\b|\btrailer\b/.test(text)) score -= 100;
+  if (/\bhc\b|hard.?coded|hardsub/.test(text)) score -= 10;
   return score;
 }
 

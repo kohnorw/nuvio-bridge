@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=98';
-import * as controls from './controls.js?v=98';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=99';
+import * as controls from './controls.js?v=99';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -368,6 +368,10 @@ async function play(next, opts = {}) {
   trace.length = 0;
 
   stopSession();
+  // Nothing is playing until the server answers: the Quality menu says so
+  // rather than describing the stream that was just replaced.
+  state.session = null;
+  renderQualityMenu();
   closeExternalPlayer();
   hideFallback();
   $('#watch-audio-wrap').hidden = true;
@@ -376,7 +380,7 @@ async function play(next, opts = {}) {
   updateNav();
   loadSources(gen);
   resetVideo();
-  if (newItem) startItemSubtitles();
+  if (newItem) { startItemSubtitles(); state.triedSources = new Map(); }
   setStatus('Preparing the stream…');
 
   // Where to start: an explicit position, else this tab's own memory, else
@@ -391,7 +395,8 @@ async function play(next, opts = {}) {
   if (!item.transcodeKey) {
     note('no ffmpeg — playing the source directly');
     embeddedKnown();
-    state.session = { mode: 'source', tracks: [], audio: 0 };
+    state.session = { mode: 'source', tracks: [], audio: 0, quality: 'original' };
+    renderQualityMenu();
     load(gen, { src: item.url, type: 'video/mp4', resumeAt });
     return;
   }
@@ -421,7 +426,7 @@ async function play(next, opts = {}) {
     // desktop with the launcher, offered first everywhere else.
     note(`conversion refused: ${err.message}`);
     embeddedKnown();
-    showFallback(`The server couldn’t convert this: ${err.message}`);
+    failOrNext(`The server couldn’t convert this: ${err.message}`, err.message);
     return;
   }
 
@@ -435,6 +440,7 @@ async function play(next, opts = {}) {
 
   if (reply.mode === 'external') {
     state.session = { mode: 'external', tracks: [], audio: 0 };
+    renderQualityMenu();
     handToVlc(describeFile(reply));
     return;
   }
@@ -589,9 +595,9 @@ async function load(gen, { src, type, resumeAt, live = false }) {
       setTimeout(() => { if (!isStale(gen)) hls.startLoad(); }, 2000);
       return;
     }
-    showFallback(data.type === Hls.ErrorTypes.NETWORK_ERROR
+    failOrNext(data.type === Hls.ErrorTypes.NETWORK_ERROR
       ? 'The stream stopped arriving.'
-      : `Playback failed: ${data.details}`);
+      : `Playback failed: ${data.details}`, data.details);
   });
   hls.loadSource(src);
   hls.attachMedia(video);
@@ -654,7 +660,7 @@ function onPlaybackError(err) {
     return;
   }
   if (undecodable) { retryDecode(err); return; }
-  showFallback(describeError(err));
+  failOrNext(describeError(err));
 }
 
 // A decode error is very often momentary — a corrupt segment, a seek that
@@ -686,7 +692,7 @@ function retryDecode(err) {
     t.deadline = setTimeout(() => {
       if (decodeTrouble !== t || isStale(gen)) return;
       decodeTrouble = null;
-      showFallback(describeError(err));
+      failOrNext(describeError(err), 'could not decode');
     }, DECODE_GRACE_MS);
   }
   const t = decodeTrouble;
@@ -815,6 +821,8 @@ function watchForSilence(gen) {
     // Mid-way through decode retries: those have their own 45 s deadline.
     if (decodeTrouble?.gen === gen) { watchForSilence(gen); return; }
 
+    // Nothing at all from this source: another may do better.
+    if (await tryNextSource('nothing played')) return;
     let server = null;
     try { server = await request(`/api/transcode/debug/${session.sid}`); } catch { /* best effort */ }
     if (isStale(gen)) return;
@@ -1094,8 +1102,12 @@ function renderQualityMenu() {
   select.replaceChildren();
   for (const value of ['auto', ...LEVELS]) {
     const el = option(value, LEVEL_NAMES[value]);
-    if (value === 'auto' && playing) el.dataset.detail = `now ${LEVEL_NAMES[playing]}`;
-    else if (value === 'original' && state.session?.bitRate) el.dataset.detail = `${(state.session.bitRate / 1000).toFixed(1)} Mbps`;
+    if (value === 'auto') el.dataset.detail = playing ? `now ${LEVEL_NAMES[playing]}` : 'loading…';
+    else if (value === 'original') {
+      const { sourceHeight, bitRate } = state.session || {};
+      el.dataset.detail = [sourceHeight && `${sourceHeight}p`, bitRate && `${(bitRate / 1000).toFixed(1)} Mbps`]
+        .filter(Boolean).join(' · ') || (playing ? 'as the file is' : 'loading…');
+    }
     else if (LEVEL_KBPS[value]) el.dataset.detail = `${(LEVEL_KBPS[value] / 1000).toFixed(1)} Mbps`;
     select.append(el);
   }
@@ -1573,6 +1585,51 @@ function closeExternalPlayer() {
 function hideFallback() {
   $('#watch-fallback').hidden = true;
   $('#watch-fallback-note').hidden = true;
+}
+
+// When a source can't be played — refused by the converter, undecodable,
+// silent — the next-best one from the same list is tried, in the order the
+// server ranked them, before anything is put in front of the person. Up to
+// three per episode; after that it's the fallback screen.
+const MAX_AUTO_SOURCES = 3;
+
+async function tryNextSource(reason) {
+  const item = current();
+  const type = state.ticket?.type;
+  const id = item?.id || state.ticket?.id;
+  if (!item || !type || !id || state.session?.live) return false;
+  const gen = state.gen;
+  let list = sourceCache.get(`${type}/${id}`);
+  if (!list) {
+    try {
+      const data = await request(`/api/streams/${encodeURIComponent(type)}/${encodeURIComponent(id)}?keys=1`);
+      list = Array.isArray(data?.streams) ? data.streams : [];
+      sourceCache.set(`${type}/${id}`, list);
+    } catch { return false; }
+  }
+  if (isStale(gen)) return true;
+  state.triedSources ||= new Map();
+  const tried = state.triedSources.get(state.index) || new Set([item.url]);
+  if (tried.size > MAX_AUTO_SOURCES) return false;
+  const next = list.find((s) => s.playable && s.url && s.transcodeKey && !tried.has(s.url));
+  if (!next) return false;
+  tried.add(next.url);
+  state.triedSources.set(state.index, tried);
+  note(`source failed (${reason}) — trying ${next.headline || 'the next source'}`);
+  setStatus('That source didn’t play — trying the next one…');
+  const at = state.video?.currentTime;
+  state.ticket.items[state.index] = { ...item, url: next.url, transcodeKey: next.transcodeKey };
+  // The old file's own subtitle tracks don't exist in the new one.
+  if (state.subtitle?.key?.startsWith('e')) state.subtitle = null;
+  play(state.index, at > 1 ? { resumeAt: at } : {});
+  return true;
+}
+
+// The fallback screen, unless another source can be tried first.
+async function failOrNext(message, reason = message) {
+  const gen = state.gen;
+  if (await tryNextSource(reason)) return;
+  if (!isStale(gen)) showFallback(message);
 }
 
 function showFallback(message) {

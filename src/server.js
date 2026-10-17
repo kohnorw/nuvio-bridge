@@ -1564,6 +1564,11 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       return res.json({
         mode: 'direct',
         url: await signing.signedPath('/media', url),
+        quality: 'original',
+        bitRate: plan.bitRate || null,
+        sourceHeight: plan.height || null,
+        height: plan.height || null,
+        streamKbps: plan.bitRate || null,
         duration: plan.duration,
         videoCodec: plan.videoCodec,
         audioCodec: plan.audioCodec,
