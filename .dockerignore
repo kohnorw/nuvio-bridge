@@ -1,0 +1,24 @@
+# node_modules holds only ESLint now — a dev tool the image has no use for.
+# Without this file it would still be uploaded to the daemon before every
+# build, which looks exactly like a hang.
+node_modules
+npm-debug.log*
+package-lock.json
+eslint.config.mjs
+
+# Secrets and state. .env holds SESSION_SECRET; data/ holds encrypted Nuvio
+# refresh tokens. Neither belongs in an image layer.
+.env
+.env.*
+!.env.example
+data
+*.enc
+secret.key
+
+.git
+.gitignore
+.github
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md

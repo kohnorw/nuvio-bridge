@@ -1,0 +1,93 @@
+services:
+  nuvio-bridge:
+    build:
+      context: .
+      args:
+        # jellyfin (default): GPU tone mapping and subtitle burn-in.
+        # debian: smaller, no GPU tone mapping.
+        # none: no conversion at all; anything the browser can't play goes to VLC.
+        FFMPEG: ${FFMPEG:-jellyfin}
+    image: nuvio-bridge
+    container_name: nuvio-bridge
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Nuvio's Supabase backend.
+      NUVIO_BACKEND_URL: ${NUVIO_BACKEND_URL:-https://api.nuvio.tv}
+      # Required — Nuvio's publishable key. See the README.
+      # Nuvio's publishable key is built in, so this is only for other backends.
+      NUVIO_ANON_KEY: ${NUVIO_ANON_KEY:-}
+      # Optional — self-hosted Nuvio server to auto-discover instead.
+      NUVIO_SERVER: ${NUVIO_SERVER:-}
+      # The address your devices reach this container on. VLC on iOS bounces
+      # back here when playback ends, so it needs to be the outside-world URL.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      # Encrypts stored refresh tokens. Generate with: openssl rand -hex 32
+      # Leave blank and one is generated into the data volume on first boot.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      # Set true to let people create Nuvio accounts from the sign-in screen.
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+      SESSION_IDLE_DAYS: 60
+      BINGE_EPISODE_LIMIT: ${BINGE_EPISODE_LIMIT:-60}
+      # Hide streams above this resolution (1080 = no 4K). 0 shows everything.
+      MAX_STREAM_RESOLUTION: ${MAX_STREAM_RESOLUTION:-1080}
+      STREAM_PROBE: ${STREAM_PROBE:-head}
+      STREAM_PROBE_LIMIT: ${STREAM_PROBE_LIMIT:-3}
+      STREAM_PROBE_TIMEOUT_MS: ${STREAM_PROBE_TIMEOUT_MS:-6000}
+      PLAYLIST_TTL_HOURS: ${PLAYLIST_TTL_HOURS:-24}
+      # Route blocked streams through the server for the in-page player. Off
+      # by default: every byte of video would pass through this container.
+      MEDIA_PROXY: ${MEDIA_PROXY:-false}
+      # Lumen, the built-in converter. With it on, Automatic plays in the page
+      # on every device and VLC is the fallback. TRANSCODE=false turns it off
+      # and puts phones back on VLC by default.
+      TRANSCODE: ${TRANSCODE:-true}
+      # Simultaneous conversions. Remuxes are cheap; each GPU encode is one
+      # NVENC session (8 on current NVIDIA drivers).
+      TRANSCODE_MAX: ${TRANSCODE_MAX:-3}
+      TRANSCODE_SEGMENT_SECS: ${TRANSCODE_SEGMENT_SECS:-2}
+      # How far ahead of the viewer to convert before pausing ffmpeg. A paused
+      # film costs nothing; raise this if a slow source causes buffering.
+      TRANSCODE_AHEAD_SECS: ${TRANSCODE_AHEAD_SECS:-90}
+      # Converted video kept behind the viewer, so scrubbing back is instant.
+      TRANSCODE_KEEP_BEHIND_SECS: ${TRANSCODE_KEEP_BEHIND_SECS:-1200}
+      # auto picks the best accelerator that actually works on this machine.
+      # none forces the CPU. Or name one: nvenc, qsv, vaapi, videotoolbox,
+      # amf, v4l2m2m.
+      TRANSCODE_HWACCEL: ${TRANSCODE_HWACCEL:-auto}
+      # Encode height ceiling — the biggest lever on encoding speed. A 2160p
+      # source encoded at 2160p is four times the pixels of the same thing at
+      # 1080p. 0 encodes at source height.
+      TRANSCODE_MAX_HEIGHT: ${TRANSCODE_MAX_HEIGHT:-1080}
+      # Left unset, the x264 preset is chosen from the core count.
+      # TRANSCODE_PRESET: veryfast
+
+      HTTP_TIMEOUT_MS: 15000
+      CACHE_TTL_MS: 300000
+    volumes:
+      - nuvio-state:/data
+
+    # GPU access. Neither does anything on its own — the host also needs the
+    # matching driver.
+    #
+    # NVIDIA (e.g. GTX 1080): install the NVIDIA Container Toolkit on the
+    # host, then uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu, compute, video, utility]
+    #
+    # Intel or AMD (Quick Sync / VAAPI): uncomment both. The group lets the
+    # container's user open the render node; find its number on the host with
+    #   stat -c %g /dev/dri/renderD128
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "993"
+
+volumes:
+  nuvio-state:

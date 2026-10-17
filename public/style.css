@@ -1,0 +1,2161 @@
+/* Tokens taken from the app source so this matches rather than approximates:
+     core/ui/Tokens.kt      — spacing, radii, type sizes, line heights, motion
+     core/ui/ThemeColors.kt — the twelve palettes
+     core/ui/TypeScale.kt   — weights per role
+   Compose dp and sp map 1:1 to CSS px at the default text size. */
+
+:root {
+  --r-xs: 4px;  --r-sm: 6px;  --r-md: 8px;  --r-lg: 12px;
+  --r-xl: 16px; --r-xxl: 24px; --r-full: 999px;
+
+  --o-disabled: 0.38; --o-secondary: 0.70; --o-muted: 0.60;
+  --o-selected: 0.15; --o-subtle: 0.06; --o-overlay-heavy: 0.82;
+
+  --m-fast: 150ms; --m-normal: 220ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+
+  /* homeSectionHorizontalPaddingForWidth: 16dp on phones */
+  --gutter: 16px;
+  --tabbar-h: 49px;
+  /* PosterCardDimensions / PosterCardStyleRepository defaults */
+  --avatar-size: 84px;
+  --poster-w: 126px;
+  --poster-ratio: 0.675;
+  --poster-landscape-w: 206px;   /* 126 * 180/110 */
+  --poster-landscape-ratio: 1.77;
+  --section-gap: 24px;           /* spacing.sectionGap */
+  --control-gap: 8px;            /* spacing.controlGap */
+
+  /* Default palette: WHITE, what the app ships with */
+  --accent: #F5F5F5; --accent-variant: #E0E0E0; --on-accent: #111111;
+  --focus-ring: #FFFFFF; --focus-bg: #303030;
+  --bg: #0D0D0D; --bg-elevated: #1A1A1A; --bg-card: #222222;
+}
+
+body[data-theme="Gold"]       { --accent:#E8A91C; --accent-variant:#9A6200; --on-accent:#111111; --focus-ring:#FFD45C; --focus-bg:#3D2D1A; --bg:#0F0E0B; --bg-elevated:#1D1A14; --bg-card:#262116; }
+body[data-theme="Jade"]       { --accent:#22D37C; --accent-variant:#0BBF9A; --on-accent:#111111; --focus-ring:#7BF08D; --focus-bg:#153A2C; --bg:#0B0F0D; --bg-elevated:#141D18; --bg-card:#16251D; }
+body[data-theme="RoseGold"]   { --accent:#EC70A9; --accent-variant:#B75AFF; --on-accent:#111111; --focus-ring:#FFB37A; --focus-bg:#442037; --bg:#100C0F; --bg-elevated:#1F161D; --bg-card:#281A24; }
+body[data-theme="ArcticBlue"] { --accent:#3185F5; --accent-variant:#4D55E8; --on-accent:#FFFFFF; --focus-ring:#4DE3FF; --focus-bg:#172844; --bg:#0B0E14; --bg-elevated:#141A24; --bg-card:#161E2A; }
+body[data-theme="Graphite"]   { --accent:#AAB2BE; --accent-variant:#687381; --on-accent:#111111; --focus-ring:#F3F5F7; --focus-bg:#30343A; --bg:#0C0D0F; --bg-elevated:#17191D; --bg-card:#20242A; }
+body[data-theme="Crimson"]    { --accent:#E53935; --accent-variant:#C62828; --on-accent:#FFFFFF; --focus-ring:#FF5252; --focus-bg:#3D1A1A; --bg:#0D0D0D; --bg-elevated:#1A1A1A; --bg-card:#241A1A; }
+body[data-theme="Ocean"]      { --accent:#1E88E5; --accent-variant:#1565C0; --on-accent:#FFFFFF; --focus-ring:#42A5F5; --focus-bg:#1A2D3D; --bg:#0D0D0F; --bg-elevated:#1A1A1E; --bg-card:#1A1F24; }
+body[data-theme="Violet"]     { --accent:#8E24AA; --accent-variant:#6A1B9A; --on-accent:#FFFFFF; --focus-ring:#AB47BC; --focus-bg:#2D1A3D; --bg:#0D0D0F; --bg-elevated:#1A1A1E; --bg-card:#1F1A24; }
+body[data-theme="Emerald"]    { --accent:#43A047; --accent-variant:#2E7D32; --on-accent:#FFFFFF; --focus-ring:#66BB6A; --focus-bg:#1A3D1E; --bg:#0D0D0D; --bg-elevated:#1A1A1A; --bg-card:#1A241A; }
+body[data-theme="Amber"]      { --accent:#FB8C00; --accent-variant:#EF6C00; --on-accent:#111111; --focus-ring:#FFA726; --focus-bg:#3D2D1A; --bg:#0F0D0D; --bg-elevated:#1E1A1A; --bg-card:#24201A; }
+body[data-theme="Rose"]       { --accent:#D81B60; --accent-variant:#C2185B; --on-accent:#FFFFFF; --focus-ring:#EC407A; --focus-bg:#3D1A2D; --bg:#0D0D0D; --bg-elevated:#1A1A1A; --bg-card:#241A1F; }
+body[data-theme="White"]      { --accent:#F5F5F5; --accent-variant:#E0E0E0; --on-accent:#111111; --focus-ring:#FFFFFF; --focus-bg:#303030; --bg:#0D0D0D; --bg-elevated:#1A1A1A; --bg-card:#222222; }
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+/* Nothing is allowed to widen the page. A single long release name in a
+   stream row used to push the body wider than the viewport, which shrank
+   every full-width block and left a black band down the right side. */
+html, body {
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* One scroll container for the page on every platform. iOS used to need
+   -webkit-overflow-scrolling to get momentum; everything current has it by
+   default, and setting it on nested elements is what makes scrolling feel
+   different from one part of the app to another. */
+html {
+  scroll-behavior: auto;
+  /* Reserves the scrollbar's width up front, so content doesn't shift
+     sideways when a short page becomes a long one. */
+  scrollbar-gutter: stable;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+
+html { background: var(--bg); }
+
+body {
+  background: var(--bg);
+  color: #FFFFFF;
+  font-family: -apple-system, "SF Pro Text", system-ui, "Roboto", sans-serif;
+  font-size: 15px;   /* bodyApp 15sp / 22sp */
+  line-height: 22px;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+
+/* Long unbroken filenames wrap instead of escaping their card. */
+.stream-name, .settings-value { overflow-wrap: anywhere; }
+
+.screen {
+  width: 100%;
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
+  padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom));
+}
+
+/* Type roles from TypeScale.kt */
+/* displayLarge / headlineLarge / labelMedium, straight from Theme.kt */
+.display      { font-size: 48px; line-height: 52px; font-weight: 800; letter-spacing: -1.2px; margin: 0; }
+.page-display { font-size: 38px; line-height: 42px; font-weight: 700; letter-spacing: -1.2px;
+                margin: calc(16px + env(safe-area-inset-top)) 0 18px; }
+.headline     { font-size: 26px; line-height: 30px; font-weight: 600; letter-spacing: -0.8px; margin: 0 0 4px; }
+.section-label {
+  font-size: 12px; line-height: 14px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  color: rgb(255 255 255 / var(--o-muted));
+  margin: var(--section-gap) 0 12px;
+}
+
+/* ---------------------------------------------------------- controls */
+
+input {
+  width: 100%; padding: 15px 16px; margin-bottom: 12px;
+  font: inherit; font-size: 16px; color: #fff;   /* 16px stops iOS zooming on focus */
+  background: var(--bg-elevated);
+  border: 1px solid rgb(255 255 255 / var(--o-subtle));
+  border-radius: var(--r-xl);
+  -webkit-appearance: none; appearance: none;
+}
+input::placeholder { color: rgb(255 255 255 / var(--o-muted)); }
+input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+button { font: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.btn-primary {
+  width: 100%; padding: 16px; margin-top: 4px;
+  font-size: 16px; font-weight: 700;
+  color: var(--on-accent); background: var(--accent);
+  border-radius: var(--r-xl);
+  transition: opacity var(--m-fast) var(--ease-standard);
+}
+.btn-primary:active { opacity: 0.85; }
+.btn-primary:disabled { opacity: var(--o-disabled); }
+
+.btn-link {
+  display: block; width: 100%; margin-top: 14px; padding: 6px;
+  font-size: 14px; font-weight: 600; color: var(--accent);
+}
+
+.btn-ghost {
+  padding: 14px 18px; font-size: 15px; font-weight: 600;
+  background: var(--bg-elevated); border-radius: var(--r-xl); color: #fff;
+}
+.btn-ghost.wide { display: block; width: 100%; margin-top: 12px; }
+.btn-ghost.danger { color: #FF6B6B; }
+
+.form-error { color: #FF6B6B; font-size: 13px; line-height: 18px; margin: 12px 0 0; }
+
+/* ------------------------------------------------------------ sign in */
+
+.screen-auth { display: flex; align-items: center; min-height: 100dvh; }
+.auth-inner { width: 100%; max-width: 420px; margin: 0 auto; padding-bottom: 40px; }
+.auth-sub { font-size: 16px; color: rgb(255 255 255 / var(--o-secondary)); margin: 8px 0 32px; }
+.auth-foot { font-size: 13px; line-height: 18px; color: rgb(255 255 255 / var(--o-muted)); margin-top: 28px; }
+
+/* ----------------------------------------------------------- profiles */
+
+.screen-profiles { display: flex; flex-direction: column; justify-content: center; min-height: 100dvh; }
+/* Cards are the width of the avatar, not a stretched fraction of the row.
+   A grid of 1fr columns centres each avatar inside a cell much wider than it
+   is, which leaves the first one indented from the heading above by half the
+   leftover space — and the indent changes with the number of profiles. */
+.profile-grid {
+  display: flex; flex-wrap: wrap;
+  gap: 22px 20px;
+  max-width: 900px;
+}
+.profile-card {
+  flex: 0 0 var(--avatar-size);
+  width: var(--avatar-size);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.avatar {
+  width: var(--avatar-size); height: var(--avatar-size); border-radius: var(--r-full);
+  background-size: cover; background-position: center;
+  display: grid; place-items: center;
+  font-size: 28px; font-weight: 800; color: #fff;
+  border: 2px solid transparent;
+}
+.profile-card:active .avatar { border-color: var(--focus-ring); }
+.profile-name {
+  font-size: 14px; color: rgb(255 255 255 / var(--o-secondary));
+  max-width: 100%; text-align: center; overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- home */
+
+/* The tab itself has no side padding: the hero is full-bleed and every
+   inner block re-applies the gutter. That's what stops the hero from
+   being inset while rails sit flush. */
+#tab-home { padding-left: 0; padding-right: 0; }
+#home-rows { padding: 0; width: 100%; }
+
+/* ================================================================ hero
+
+   The banner at the top of Home. One block, the only hero rules in the file.
+
+   Size: on a desktop or tablet the banner is exactly the shape of a film
+   backdrop (16:9) and scales with the window, capped so a short window still
+   shows the first row. On a phone it is a share of the screen height.
+
+   No dead band: the first row slides up over the banner's faded bottom
+   (--hero-overlap), so the fade is behind content instead of being an empty
+   dark strip. The title, buttons and dots sit above the overlap. */
+
+:root { --hero-overlap: 24px; }
+
+.hero {
+  position: relative;
+  width: 100%;
+  height: clamp(340px, 62dvh, 600px);
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: 0 0 28px 28px;
+}
+.hero[hidden] { display: none; }
+
+.hero-track {
+  display: flex;
+  height: 100%;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+.hero-track::-webkit-scrollbar { display: none; }
+
+.hero-slide {
+  position: relative;
+  flex: 0 0 100%;
+  width: 100%; height: 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  background-size: cover;
+  background-position: center 25%;
+  background-repeat: no-repeat;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+/* Bottom fade into the page, short and stepped so the picture stays visible. */
+.hero-slide::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0;
+  height: 45%;
+  background: linear-gradient(to top,
+    var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 70%, transparent) 25%,
+    color-mix(in srgb, var(--bg) 25%, transparent) 60%,
+    transparent 100%);
+  pointer-events: none;
+}
+
+.hero-content {
+  position: relative; z-index: 1;
+  padding: 0 24px calc(var(--hero-overlap) + 28px);
+  text-align: center;
+}
+.hero-title {
+  margin: 0;
+  font-size: 28px; line-height: 1.12; font-weight: 900; letter-spacing: -0.4px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  text-shadow: 0 2px 18px rgb(0 0 0 / 0.35);
+}
+.hero-meta {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px;
+  margin: 10px 0 0;
+  font-size: 14px; line-height: 18px; font-weight: 600;
+}
+.hero-meta .dot { width: 3px; height: 3px; border-radius: 50%; background: rgb(255 255 255 / 0.5); }
+.hero-actions { margin-top: 14px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.hero-play {
+  padding: 11px 26px; border-radius: 40px;
+  font-size: 15px; line-height: 20px; font-weight: 700;
+  background: #fff; color: var(--bg);
+}
+.hero-toggle {
+  flex: 0 0 auto;
+  width: 38px; height: 38px; border-radius: var(--r-full);
+  display: grid; place-items: center;
+  background: rgb(255 255 255 / 0.16);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.hero-toggle svg { width: 20px; height: 20px; fill: #fff; transition: transform var(--m-normal) var(--ease-standard); }
+.hero-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.hero-toggle[aria-expanded="true"] { background: rgb(255 255 255 / 0.28); }
+.hero-more { margin: 12px auto 0; max-width: 460px; max-height: 26vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.hero-desc { margin: 0; font-size: 14px; line-height: 20px; color: rgb(255 255 255 / 0.88); text-shadow: 0 1px 12px rgb(0 0 0 / 0.6); }
+.hero-genres {
+  margin: 8px 0 0;
+  font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+.hero-dots {
+  position: absolute; left: 0; right: 0; z-index: 2;
+  bottom: calc(var(--hero-overlap) + 10px);
+  display: flex; justify-content: center; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+.hero-dot {
+  pointer-events: auto;
+  width: 8px; height: 8px; padding: 0;
+  border-radius: var(--r-full);
+  background: #fff; opacity: 0.35;
+  transition: width var(--m-normal) var(--ease-standard), opacity var(--m-normal) var(--ease-standard);
+}
+.hero-dot[aria-current="true"] { width: 32px; opacity: 0.92; }
+
+/* The rows slide up over the banner's fade. */
+.hero:not([hidden]) + #home-rows {
+  position: relative; z-index: 2;
+  margin-top: calc(var(--hero-overlap) * -1);
+}
+.hero[hidden] + #home-rows { padding-top: var(--section-gap); }
+
+@media (min-width: 900px) {
+  :root { --hero-overlap: clamp(56px, 7vw, 120px); }
+  .hero {
+    height: auto;
+    aspect-ratio: 16 / 9;
+    min-height: 380px;
+    max-height: min(86dvh, 960px);
+    border-radius: 0;
+  }
+  /* A scrim from the left keeps the title legible over bright artwork. */
+  .hero-slide::before {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to right, rgb(0 0 0 / 0.6) 0%, rgb(0 0 0 / 0.25) 38%, transparent 62%);
+    pointer-events: none;
+  }
+  .hero-content {
+    max-width: 680px;
+    padding: 0 var(--gutter) calc(var(--hero-overlap) + 36px);
+    text-align: left;
+  }
+  .hero-title { font-size: clamp(36px, 3.4vw, 60px); }
+  .hero-meta, .hero-actions { justify-content: flex-start; }
+  .hero-more { margin-left: 0; }
+  .hero-dots { justify-content: flex-end; padding-right: calc(var(--gutter) + 8px); }
+}
+
+/* Rows below the fold aren't laid out until they're near enough to matter,
+   which is what keeps a home screen of twelve rails scrolling smoothly on a
+   phone. The contain-intrinsic-size keeps the scrollbar honest meanwhile. */
+.row {
+  margin-bottom: var(--section-gap);
+  content-visibility: auto;
+  /* Height only. The shorthand with one length sets the width too, and some
+     browsers then laid off-screen rows out narrower than the window. */
+  contain-intrinsic-block-size: auto 280px;
+  width: 100%;
+}
+
+/* NuvioShelfSectionHeader: titleLarge (18/24 SemiBold) with a circular
+   "view all" pill on the right — not an addon name. */
+.row-head {
+  display: flex; align-items: center; gap: var(--control-gap);
+  padding: 0 var(--gutter); margin: 0 0 12px;
+}
+.row-title {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  font-size: 18px; line-height: 24px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row-source {
+  flex: 0 0 auto;
+  width: 32px; height: 32px; border-radius: var(--r-full);
+  display: grid; place-items: center;
+  background: rgb(255 255 255 / var(--o-selected));
+}
+.row-source svg { width: 16px; height: 16px; fill: #fff; }
+
+.rail {
+  display: flex; gap: var(--control-gap);
+  /* Snapping lines posters up with the gutter, not the screen edge — without
+     this the first poster on a phone was pushed flush against the left. */
+  scroll-padding-inline: var(--gutter);
+  overflow-x: auto; overflow-y: hidden;
+  /* Without this, running off the end of a rail triggers the browser's
+     back gesture on a trackpad. */
+  overscroll-behavior-x: contain;
+  padding: 0 var(--gutter);
+  scrollbar-width: none;
+}
+
+/* Snapping is right for a finger, which throws a rail and wants it to settle
+   somewhere sensible. It is wrong for a wheel or a trackpad, where it fights
+   every small movement — so it is only turned on for touch. */
+@media (hover: none) {
+  .rail { scroll-snap-type: x proximity; }
+  .rail .poster { scroll-snap-align: start; }
+}
+.rail::-webkit-scrollbar { display: none; }
+
+/* DefaultPosterCardWidthDp = 126, aspect 0.675, radius 12 */
+.rail .poster { flex: 0 0 var(--poster-w); width: var(--poster-w); }
+
+.poster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--poster-w), 1fr));
+  gap: 16px var(--control-gap);
+}
+
+.poster { display: block; text-align: left; padding: 0; min-width: 0; }
+.poster .art {
+  position: relative; width: 100%; aspect-ratio: var(--poster-ratio);
+  border-radius: var(--r-lg); overflow: hidden;
+  background: var(--bg-card);
+  transition: transform var(--m-fast) var(--ease-standard);
+}
+.poster:active .art { transform: scale(0.96); }
+.poster .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* showTitleBelow defaults on: bodyMedium (14/20 Normal), one line */
+.poster .label {
+  font-size: 14px; line-height: 20px; font-weight: 400;
+  margin-top: 6px; color: #FFFFFF;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- search */
+
+.search-bar { padding-top: calc(12px + env(safe-area-inset-top)); }
+.search-bar input { margin-bottom: 18px; border-radius: var(--r-full); }
+
+/* ------------------------------------------------------------ details */
+
+.screen-details {
+  padding: 0 0 calc(40px + env(safe-area-inset-bottom));
+  min-height: 100dvh;
+}
+
+.backdrop {
+  position: relative; width: 100%;
+  height: 46vh; min-height: 260px; max-height: 460px;
+  background-color: var(--bg-card);
+  background-size: cover;
+  background-position: center 20%;
+  background-repeat: no-repeat;
+}
+/* When only a portrait poster exists, a blurred copy fills the sides
+   instead of leaving bars. */
+.backdrop.poster-only { background-size: auto 100%; background-position: center; }
+/* z-index 0, not -1. A negative z-index here paints the blurred copy behind
+   the parent's own background colour, which hides it completely — the sides
+   end up flat grey instead of filled. The sharp poster is the parent's
+   background and still paints on top, because a positioned child at z-index 0
+   sits above the parent's background but below its content. */
+.backdrop.poster-only::before {
+  content: ""; position: absolute; inset: 0; z-index: 0;
+  background: inherit; background-size: cover;
+  filter: blur(28px) saturate(140%); transform: scale(1.2);
+}
+/* The poster itself has to sit above that blurred fill. */
+.backdrop.poster-only { background-color: transparent; }
+.backdrop.poster-only::after { z-index: 1; }
+.backdrop::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(to top, var(--bg) 0%,
+    color-mix(in srgb, var(--bg) 88%, transparent) 14%,
+    rgb(0 0 0 / 0.45) 55%, rgb(0 0 0 / 0.35) 100%);
+}
+
+/* Absolute, not fixed: pinned over the backdrop where the app puts it, and
+   scrolls away instead of hovering over the episode list. */
+.back-fab {
+  position: absolute; z-index: 20;
+  top: calc(10px + env(safe-area-inset-top)); left: 10px;
+  width: 40px; height: 40px; border-radius: var(--r-full);
+  background: rgb(0 0 0 / var(--o-overlay-heavy));
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  display: grid; place-items: center;
+}
+.back-fab svg { width: 20px; height: 20px; fill: #fff; }
+
+.details-body { padding: 0 var(--gutter); margin-top: -40px; position: relative; z-index: 1; }
+.details-meta { font-size: 13px; line-height: 18px; color: rgb(255 255 255 / var(--o-secondary)); margin: 0 0 12px; }
+.details-desc {
+  font-size: 15px; line-height: 22px;
+  color: rgb(255 255 255 / var(--o-secondary));
+  margin: 0; max-width: 68ch;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.details-desc.open { -webkit-line-clamp: unset; }
+
+.chip-row {
+  display: flex; gap: 8px; overflow-x: auto;
+  margin: 18px calc(var(--gutter) * -1) 0;
+  padding: 0 var(--gutter);
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.chip-row::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto; padding: 9px 18px;
+  font-size: 14px; line-height: 20px; font-weight: 600; white-space: nowrap;
+  background: var(--bg-elevated); border-radius: var(--r-full);
+  color: rgb(255 255 255 / var(--o-secondary));
+}
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+
+/* An episode row carries a still, a title, when it aired and how long it
+   runs. The still is a fixed 16:9 box whether or not an image arrives, so a
+   list of twenty doesn't reflow as they load in. */
+.episode {
+  display: flex; gap: 14px; align-items: flex-start; width: 100%;
+  padding: 14px 0; text-align: left;
+  border-bottom: 1px solid rgb(255 255 255 / var(--o-subtle));
+}
+.episode .ep-thumb {
+  position: relative; flex: 0 0 132px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-md); overflow: hidden;
+  background: var(--bg-elevated);
+  display: grid; place-items: center;
+}
+.episode .ep-thumb img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: cover;
+}
+.episode .num {
+  font-size: 17px; font-weight: 700;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+.episode .ep-info { display: block; min-width: 0; flex: 1 1 auto; }
+.episode .ep-head { display: flex; gap: 8px; align-items: baseline; }
+.episode .ep-title {
+  display: block; font-size: 15px; line-height: 21px; font-weight: 600;
+  min-width: 0; overflow-wrap: anywhere;
+}
+.episode .ep-facts {
+  display: block; margin-top: 3px;
+  font-size: 12px; line-height: 17px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+.episode .ep-overview {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 6px;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-secondary));
+}
+.episode .ep-overview.open { -webkit-line-clamp: unset; }
+.episode[aria-current="true"] .num,
+.episode[aria-current="true"] .ep-title { color: var(--accent); font-weight: 700; }
+
+.season-summary {
+  margin: 4px 0 8px;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* Narrow phones can't give 132px to a still and still fit a sentence. */
+@media (max-width: 380px) {
+  .episode .ep-thumb { flex-basis: 104px; }
+  .episode .ep-overview { display: none; }
+}
+
+/* Stream rows — the point of the whole app */
+.stream {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 14px 14px 14px 16px; margin-bottom: 10px; text-align: left;
+  background: var(--bg-card); border-radius: var(--r-lg);
+  color: #fff; text-decoration: none;
+}
+.stream:active { background: var(--bg-elevated); }
+.stream .info { flex: 1 1 auto; min-width: 0; }
+.stream-name {
+  font-size: 14px; line-height: 20px; font-weight: 600;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.badge {
+  padding: 3px 8px; border-radius: var(--r-sm);
+  font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: 0.8px;
+  background: rgb(255 255 255 / var(--o-selected));
+  color: rgb(255 255 255 / 0.92);
+}
+
+.stream-detail {
+  display: none;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid rgb(255 255 255 / var(--o-subtle));
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; line-height: 16px;
+  color: rgb(255 255 255 / var(--o-muted));
+  overflow-wrap: anywhere;
+}
+.stream-detail.open { display: block; }
+.stream .from {
+  font-size: 12px; line-height: 14px; letter-spacing: 0.8px; text-transform: uppercase;
+  color: rgb(255 255 255 / var(--o-muted)); margin-top: 6px;
+}
+.stream .go {
+  flex: 0 0 auto; padding: 9px 18px; border-radius: var(--r-full);
+  font-size: 12px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase;
+  background: var(--accent); color: var(--on-accent);
+}
+.stream.unplayable { opacity: var(--o-disabled); }
+.stream.unplayable .go { background: rgb(255 255 255 / var(--o-selected)); color: #fff; }
+
+/* ----------------------------------------------------------- settings */
+
+.settings-group { background: var(--bg-elevated); border-radius: var(--r-lg); padding: 2px 16px; margin-bottom: 8px; }
+.settings-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+  padding: 14px 0; font-size: 15px;
+  border-bottom: 1px solid rgb(255 255 255 / var(--o-subtle));
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-value {
+  color: rgb(255 255 255 / var(--o-muted)); font-size: 14px; text-align: right; min-width: 0;
+}
+.theme-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+.swatch {
+  width: 100%; aspect-ratio: 1; border-radius: var(--r-full);
+  border: 2px solid transparent;
+  transition: transform var(--m-fast) var(--ease-standard);
+}
+.swatch[aria-pressed="true"] { border-color: #fff; transform: scale(1.08); }
+
+/* ------------------------------------------------------------ tab bar */
+
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  display: flex; align-items: stretch;
+  height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: 0.5px solid rgb(255 255 255 / var(--o-subtle));
+}
+.tab-item { flex: 1 1 0; display: grid; place-items: center; height: var(--tabbar-h); }
+.tab-item svg {
+  width: 25px; height: 25px;
+  fill: rgb(255 255 255 / var(--o-muted));
+  transition: fill var(--m-fast) var(--ease-standard);
+}
+.tab-item[aria-selected="true"] svg { fill: var(--accent); }
+.avatar-sm {
+  width: 27px; height: 27px; border-radius: var(--r-full);
+  background: var(--accent-variant); background-size: cover; background-position: center;
+  display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+  box-shadow: 0 0 0 0 transparent;
+}
+.tab-item[aria-selected="true"] .avatar-sm { box-shadow: 0 0 0 2px var(--accent); }
+
+/* ---------------------------------------------------------------misc */
+
+.empty { color: rgb(255 255 255 / var(--o-muted)); font-size: 14px; padding: 28px var(--gutter); }
+.row .empty, .poster-grid .empty { padding-left: 0; padding-right: 0; }
+
+.toast {
+  position: fixed; left: 16px; right: 16px; z-index: 40;
+  bottom: calc(var(--tabbar-h) + 14px + env(safe-area-inset-bottom));
+  padding: 13px 16px; border-radius: var(--r-lg);
+  background: var(--bg-card); color: #fff; font-size: 14px; line-height: 20px;
+  border: 0.5px solid rgb(255 255 255 / var(--o-subtle));
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.5);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tab:not([hidden]), .screen-details:not([hidden]) {
+    animation: enter var(--m-normal) var(--ease-decelerate);
+  }
+  @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ------------------------------------------------- playback settings */
+
+.back-fab.gear { left: auto; right: 10px; }
+
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+
+/* Radius.sheet = 24dp, matching the app's bottom sheets */
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 46;
+  max-height: 88dvh; overflow-y: auto;
+  padding: 10px 20px calc(24px + env(safe-area-inset-bottom));
+  background: var(--bg-elevated);
+  border-top-left-radius: var(--r-xxl);
+  border-top-right-radius: var(--r-xxl);
+  border-top: 0.5px solid rgb(255 255 255 / var(--o-subtle));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sheet:not([hidden]) { animation: sheet-up var(--m-normal) var(--ease-decelerate); }
+  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+}
+
+.sheet-grip {
+  width: 36px; height: 4px; border-radius: var(--r-full);
+  background: rgb(255 255 255 / var(--o-selected));
+  margin: 0 auto 14px;
+}
+.sheet-title { font-size: 22px; line-height: 26px; font-weight: 700; margin: 0 0 4px; }
+
+.switch-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid rgb(255 255 255 / var(--o-subtle));
+}
+.switch-row span { display: block; min-width: 0; }
+.switch-row b { display: block; font-size: 15px; line-height: 22px; font-weight: 600; }
+.switch-row small {
+  display: block; margin-top: 2px;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* iOS-style toggle, built from a checkbox so it stays keyboard-operable */
+.switch-row input[type="checkbox"] {
+  flex: 0 0 auto; position: relative;
+  width: 51px; height: 31px; margin: 0;
+  border-radius: var(--r-full);
+  background: rgb(255 255 255 / var(--o-selected));
+  -webkit-appearance: none; appearance: none;
+  transition: background var(--m-fast) var(--ease-standard);
+}
+.switch-row input[type="checkbox"]::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 27px; height: 27px; border-radius: var(--r-full);
+  background: #fff;
+  box-shadow: 0 2px 5px rgb(0 0 0 / 0.35);
+  transition: transform var(--m-fast) var(--ease-standard);
+}
+.switch-row input[type="checkbox"]:checked { background: var(--accent); }
+.switch-row input[type="checkbox"]:checked::after { transform: translateX(20px); }
+
+.chip-row.inline { margin-left: 0; margin-right: 0; padding: 0; }
+.sheet .btn-primary { margin-top: 22px; }
+
+/* The stream list gets a hint when auto-play is on */
+.autoplay-note {
+  margin: 0 0 12px;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* --------------------------------------------- catalog (view all) */
+
+.screen-catalog { padding-bottom: calc(var(--tabbar-h) + 40px + env(safe-area-inset-bottom)); }
+.back-inline { margin: calc(12px + env(safe-area-inset-top)) 0 0; }
+.screen-catalog .page-display { margin-top: 14px; }
+#catalog-more { margin-top: 20px; }
+#catalog-more:disabled { opacity: var(--o-disabled); }
+
+/* The pill is a real control now, so give it a press state */
+.row-source { border: none; cursor: pointer; }
+.row-source:active { background: rgb(255 255 255 / 0.28); }
+
+/* -------------------------------------------------- play + streams */
+
+.details-actions-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 18px 0 4px;
+}
+#details-actions { display: flex; gap: 10px; }
+
+/* Play sits next to Add to Library rather than spanning the window. A
+   full-width bar reads as a page footer on a wide screen, and on any screen
+   it makes one ordinary action look like the only thing on the page. */
+.play-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-width: 168px;
+  margin: 0; padding: 14px 32px;
+  font-size: 16px; line-height: 20px; font-weight: 700;
+  background: var(--accent); color: var(--on-accent);
+  border-radius: var(--r-full);
+  transition: opacity var(--m-fast) var(--ease-standard);
+}
+.play-button:active { opacity: 0.85; }
+
+/* The stream sheet is taller than the playback one — it's a list you scroll */
+#stream-sheet { max-height: 82dvh; display: flex; flex-direction: column; }
+#stream-sheet #stream-list {
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  margin-top: 14px; padding-bottom: 4px;
+}
+.sheet-sub {
+  margin: 2px 0 0;
+  font-size: 14px; line-height: 20px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* ------------------------------------------------ artwork fallbacks */
+
+/* A card with no usable art shows initials rather than an empty box or a
+   broken-image glyph. */
+.art-fallback {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--bg-card) 88%, #fff) 0%,
+    var(--bg-card) 100%);
+  font-size: 26px; font-weight: 700;
+  color: rgb(255 255 255 / 0.28);
+  letter-spacing: 1px;
+}
+
+.poster .sublabel {
+  margin-top: 2px;
+  font-size: 12px; line-height: 16px;
+  color: rgb(255 255 255 / var(--o-muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Genre filters sit under the catalog title */
+#catalog-genres { margin: 0 calc(var(--gutter) * -1) 18px; padding: 0 var(--gutter); }
+
+/* Row provenance above the banner title — labelMedium: 12/14, +0.8 tracking */
+.hero-source {
+  margin: 0 0 8px;
+  font-size: 12px; line-height: 14px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  color: rgb(255 255 255 / 0.72);
+}
+
+/* ----------------------------------------------- collection folders */
+
+/* Folder tiles take their shape from the folder itself: poster, landscape or
+   square (tileShape in CollectionModels.kt, where "wide" is an alias for
+   landscape). Landscape is the common case — service logos and genre art are
+   wide, and squeezing them into a portrait tile crops the artwork. */
+.rail.folders .poster.shape-landscape { flex: 0 0 var(--poster-landscape-w); width: var(--poster-landscape-w); }
+.rail.folders .poster.shape-poster    { flex: 0 0 var(--poster-w); width: var(--poster-w); }
+.rail.folders .poster.shape-square    { flex: 0 0 148px; width: 148px; }
+
+.poster.folder .art { background: var(--bg-elevated); }
+.poster.folder.shape-landscape .art { aspect-ratio: var(--poster-landscape-ratio); }
+.poster.folder.shape-poster    .art { aspect-ratio: var(--poster-ratio); }
+.poster.folder.shape-square    .art { aspect-ratio: 1; }
+
+/* Fill the tile. `contain` was letterboxing any cover whose aspect ratio
+   didn't match the tile — the black bars down the sides of the Netflix tile
+   while its neighbours sat flush. These covers are almost always a logo
+   centred on a flat background with room around it, so cropping the edges
+   takes background rather than artwork. */
+.poster.folder .art img { object-fit: cover; }
+
+/* An emoji cover should read as an icon, not as body text */
+.poster.folder .art-fallback { font-size: 34px; letter-spacing: 0; }
+
+/* Language pickers use a native select so iOS gives its own wheel */
+.lang-select {
+  width: 100%; padding: 14px 16px; margin-top: 2px;
+  font: inherit; font-size: 16px; color: #fff;
+  background: var(--bg-card);
+  border: 1px solid rgb(255 255 255 / var(--o-subtle));
+  border-radius: var(--r-xl);
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23888'><path d='M12 15.4 5.6 9l1.4-1.4 5 5 5-5L18.4 9z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 20px;
+}
+.lang-select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.sheet-hint {
+  margin: 10px 0 0;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* ------------------------------------------------- add to library */
+
+.library-button {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin: 0;
+  padding: 13px 20px 13px 17px;
+  border-radius: var(--r-full);
+  background: rgb(255 255 255 / var(--o-selected));
+  color: #fff;
+  font-size: 14px; line-height: 18px; font-weight: 600;
+  transition: background var(--m-fast) var(--ease-standard),
+              color var(--m-fast) var(--ease-standard);
+}
+.library-button svg { width: 18px; height: 18px; fill: currentColor; }
+.library-button:active { background: rgb(255 255 255 / 0.26); }
+.library-button:disabled { opacity: var(--o-disabled); }
+
+/* One button, two states: the tick and accent colour mean "saved" */
+.library-button .icon-added { display: none; }
+.library-button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.library-button[aria-pressed="true"] .icon-add { display: none; }
+.library-button[aria-pressed="true"] .icon-added { display: block; }
+
+/* ===================================================================
+   Player, hand-off, and the desktop layout.
+
+   Everything above this line is the phone. The app's own tokens carry
+   over unchanged — this adds the pieces a mouse, a keyboard and a wide
+   window need, and the screen that plays video in the page.
+   =================================================================== */
+
+/* The sidebar's text belongs to the sidebar. On a phone the bottom bar is
+   icons only, as it always was. */
+.tab-label, .nav-brand { display: none; }
+
+/* --------------------------------------------------- pointer and focus */
+
+/* Nothing here had a focus style, because a phone has no focus ring to
+   show. Anything reachable by keyboard needs one. */
+:where(button, a, input, select, .poster, .stream, .chip, .option):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .poster { cursor: pointer; }
+  .poster:hover .art { transform: scale(1.04); }
+  .stream, .episode, .option, .queue-item, .chip, .profile-card { cursor: pointer; }
+  .stream:hover, .episode:hover, .queue-item:hover { background: var(--bg-elevated); }
+  .btn-primary:hover, .play-button:hover { opacity: 0.9; }
+  .btn-ghost:hover, .btn-link:hover { color: var(--accent); }
+  .row-head:hover .row-source { background: rgb(255 255 255 / 0.28); }
+}
+
+/* ------------------------------------------------------------- rails */
+
+.rail-wrap { position: relative; }
+
+.rail-arrow {
+  position: absolute; top: 0; bottom: 0; z-index: 2;
+  width: 44px; border: none; cursor: pointer;
+  display: none; place-items: center;
+  background: linear-gradient(90deg, var(--bg) 35%, transparent);
+  color: #fff;
+  transition: opacity var(--m-fast) var(--ease-standard);
+}
+.rail-arrow.right {
+  right: 0;
+  background: linear-gradient(270deg, var(--bg) 35%, transparent);
+}
+.rail-arrow.left { left: 0; }
+.rail-arrow svg { width: 22px; height: 22px; fill: #fff; }
+.rail-wrap.at-start .rail-arrow.left,
+.rail-wrap.at-end .rail-arrow.right { opacity: 0; pointer-events: none; }
+
+/* A finger doesn't need these, and they'd sit on top of two posters. */
+@media (hover: hover) and (pointer: fine) {
+  .rail-arrow { display: grid; }
+}
+
+/* ------------------------------------------------- settings: the player */
+
+.option-list { display: flex; flex-direction: column; gap: 8px; }
+
+.option {
+  display: block; width: 100%; text-align: left;
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  color: #fff;
+}
+.option[aria-pressed="true"] { border-color: var(--accent); background: var(--focus-bg); }
+.option-label { display: block; font-size: 15px; line-height: 22px; font-weight: 600; }
+.option-hint {
+  display: block; margin-top: 2px;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-secondary));
+}
+
+.settings-note {
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-muted));
+  margin: 12px 0 4px;
+}
+
+.stream-warn {
+  margin-top: 6px;
+  font-size: 12px; line-height: 16px;
+  color: #FFB37A;
+}
+
+/* ------------------------------------------------------- hand-off bar */
+
+/* Shown only when an app hand-off silently did nothing, which is what a
+   missing player looks like from in here. */
+.handoff-bar {
+  position: fixed; z-index: 60;
+  left: var(--gutter); right: var(--gutter);
+  bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));
+  padding: 16px 18px;
+  background: var(--bg-card);
+  border: 1px solid rgb(255 255 255 / var(--o-selected));
+  border-radius: var(--r-xl);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+.handoff-bar p { margin: 0 0 12px; font-size: 14px; line-height: 20px; }
+.handoff-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.handoff-actions .btn-primary,
+.handoff-actions .btn-ghost {
+  width: auto; margin: 0; padding: 10px 18px;
+  text-decoration: none; text-align: center;
+  border-radius: var(--r-full);
+}
+.handoff-bar .btn-link { margin-top: 8px; padding: 0; }
+
+/* ------------------------------------------------------------ player */
+
+body.watching { overflow: hidden; }
+
+.screen-watch {
+  position: fixed; inset: 0; z-index: 70;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: 0 0 calc(32px + env(safe-area-inset-bottom));
+}
+
+.watch-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: calc(10px + env(safe-area-inset-top)) var(--gutter) 10px;
+}
+.watch-bar .btn-ghost { padding: 8px 4px; flex: none; }
+.watch-title {
+  flex: 1 1 auto; min-width: 0;
+  margin: 0;
+  font-size: 17px; line-height: 24px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.watch-subs { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
+.watch-subs label { font-size: 13px; color: rgb(255 255 255 / var(--o-secondary)); }
+.watch-subs .lang-select { margin: 0; max-width: 220px; }
+
+.watch-stage { background: #000; }
+#watch-video {
+  display: block;
+  width: 100%;
+  max-height: 78dvh;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.watch-meta {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 14px var(--gutter) 0;
+}
+.watch-now { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; flex: 1 1 240px; }
+.watch-position { margin: 0; font-size: 13px; color: rgb(255 255 255 / var(--o-muted)); }
+.watch-nav { display: flex; gap: 8px; }
+.watch-nav .btn-ghost { padding: 8px 16px; border-radius: var(--r-full); background: var(--bg-elevated); }
+.watch-nav .btn-ghost:disabled { opacity: var(--o-disabled); }
+
+.watch-status {
+  margin: 12px var(--gutter) 0;
+  font-size: 13px; line-height: 18px;
+  color: rgb(255 255 255 / var(--o-secondary));
+  overflow-wrap: anywhere;
+}
+
+.watch-fallback {
+  margin: 16px var(--gutter) 0;
+  padding: 18px;
+  background: var(--bg-card);
+  border-radius: var(--r-xl);
+  border: 1px solid rgb(255 255 255 / var(--o-selected));
+}
+.watch-fallback p { margin: 0 0 14px; font-size: 14px; line-height: 20px; }
+.watch-fallback-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-fallback-actions .btn-primary,
+.watch-fallback-actions .btn-ghost {
+  width: auto; margin: 0; padding: 11px 20px; border-radius: var(--r-full);
+}
+.watch-note {
+  width: 100%;
+  font-size: 12px; line-height: 17px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+#watch-queue-wrap { padding: 0 var(--gutter); }
+.queue { display: flex; flex-direction: column; }
+.queue-item {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; text-align: left;
+  padding: 12px 8px;
+  border-radius: var(--r-md);
+  color: #fff;
+  border-bottom: 0.5px solid rgb(255 255 255 / var(--o-subtle));
+}
+.queue-num {
+  flex: none; width: 26px;
+  font-size: 13px; font-weight: 700;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+.queue-title { font-size: 15px; line-height: 22px; min-width: 0; overflow-wrap: anywhere; }
+.queue-item[aria-current="true"] .queue-num,
+.queue-item[aria-current="true"] .queue-title { color: var(--accent); font-weight: 700; }
+
+/* =============================================== wide windows: sidebar */
+
+@media (min-width: 900px) {
+  :root {
+    --gutter: 32px;
+    --nav-w: 232px;
+    --tabbar-h: 0px;
+    --avatar-size: 104px;
+    --poster-w: 158px;
+    --poster-landscape-w: 258px;
+    --section-gap: 32px;
+  }
+
+  /* The bottom bar becomes a sidebar. Same buttons, same states — it is
+     the axis that changes, not the navigation. */
+  .tabbar {
+    top: 0; right: auto; bottom: 0;
+    width: var(--nav-w); height: 100dvh;
+    flex-direction: column; align-items: stretch;
+    gap: 4px;
+    padding: 24px 16px;
+    border-top: none;
+    border-right: 0.5px solid rgb(255 255 255 / var(--o-subtle));
+    background: var(--bg-elevated);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .nav-brand {
+    margin: 0 0 20px; padding: 0 12px;
+    font-size: 22px; font-weight: 800; letter-spacing: -0.8px;
+  }
+  .tab-item {
+    flex: none;
+    display: flex; align-items: center; gap: 14px;
+    height: 46px; padding: 0 12px;
+    border-radius: var(--r-lg);
+    color: rgb(255 255 255 / var(--o-secondary));
+    font-size: 15px; font-weight: 600;
+  }
+  .tab-item:hover { background: rgb(255 255 255 / var(--o-subtle)); }
+  .tab-item[aria-selected="true"] { background: var(--focus-bg); color: #fff; }
+  .tab-label { display: block; }
+  .tab-item svg { width: 21px; height: 21px; }
+
+  /* Fixed sidebar, so the scrolling content is inset by its width. */
+  #shell { padding-left: var(--nav-w); }
+
+  .screen { padding-bottom: 56px; }
+
+  /* Rows of posters and the grids run the full width of the window, like
+     the banner above them — capping them at 1400px left a wide empty band
+     down the right of a large screen. Only blocks of text and forms stop
+     short, where long lines would be hard to read. */
+  .settings-group, .option-list, .settings-note, #theme-grid,
+  #season-picker, #episode-list { max-width: 1400px; }
+
+  .details-body { margin-top: -80px; }
+  .details-desc, .settings-note, .option-hint { max-width: 72ch; }
+
+  .screen-details .details-body { padding-left: var(--gutter); padding-right: var(--gutter); }
+
+  /* A bottom sheet on a 27-inch monitor is a 27-inch-wide sheet. These
+     become ordinary centred dialogs instead. */
+  .sheet {
+    left: 50%; right: auto; bottom: auto; top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(620px, 92vw);
+    max-height: 84dvh;
+    padding: 24px 28px 28px;
+    border-radius: var(--r-xxl);
+    border: 1px solid rgb(255 255 255 / var(--o-selected));
+    box-shadow: 0 24px 64px rgb(0 0 0 / 0.55);
+  }
+  .sheet-grip { display: none; }
+  #stream-sheet { max-height: 84dvh; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .sheet:not([hidden]) { animation: sheet-in var(--m-normal) var(--ease-decelerate); }
+    @keyframes sheet-in {
+      from { transform: translate(-50%, -46%); opacity: 0; }
+      to { transform: translate(-50%, -50%); opacity: 1; }
+    }
+  }
+
+  .handoff-bar { left: auto; right: 24px; bottom: 24px; width: min(420px, 90vw); }
+
+  .profile-grid { gap: 28px 26px; max-width: 1400px; }
+  .theme-grid { grid-template-columns: repeat(12, 1fr); }
+
+  /* The player gets the room: video centred, queue beside it. */
+  .screen-watch { padding-bottom: 48px; }
+  .watch-stage { display: grid; place-items: center; }
+  #watch-video { max-height: 74dvh; width: auto; max-width: 100%; }
+  .watch-title { font-size: 19px; }
+}
+
+@media (min-width: 1500px) {
+  :root { --poster-w: 178px; --poster-landscape-w: 291px; }
+}
+/* Very wide screens: bigger posters, so a row isn't a long strip of tiny ones. */
+@media (min-width: 2200px) {
+  :root { --poster-w: 210px; --poster-landscape-w: 344px; }
+}
+
+/* Keyboard users on a desktop shouldn't lose the video controls to a
+   transition they didn't ask for. */
+@media (prefers-reduced-motion: reduce) {
+  .rail-arrow, .poster .art { transition: none; }
+}
+
+/* ------------------------------------------------------------ skeletons */
+
+/* Placeholders in the shape of the thing being fetched. They exist to stop
+   the page jumping when content lands, so their sizes deliberately match the
+   real cards rather than being generic grey bars. */
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--poster-w), 1fr));
+  gap: 16px var(--control-gap);
+  padding: 0 var(--gutter);
+}
+#catalog-grid .skeleton-grid,
+#search-results .skeleton-grid,
+#library-grid .skeleton-grid { padding: 0; }
+
+.skeleton-list { display: flex; flex-direction: column; gap: 14px; }
+
+.skeleton {
+  background: var(--bg-elevated);
+  border-radius: var(--r-lg);
+}
+.skeleton-poster { width: 100%; aspect-ratio: var(--poster-ratio); }
+.skeleton-episode { height: 92px; }
+.skeleton-stream { height: 76px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton {
+    background: linear-gradient(90deg,
+      var(--bg-elevated) 25%,
+      var(--bg-card) 37%,
+      var(--bg-elevated) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-sweep 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-sweep {
+    from { background-position: 100% 50%; }
+    to { background-position: 0 50%; }
+  }
+}
+
+@media (min-width: 900px) {
+  .episode .ep-thumb { flex-basis: 178px; }
+  .episode .ep-overview { -webkit-line-clamp: 3; max-width: 78ch; }
+  #season-summary { max-width: 1400px; }
+}
+
+/* ---------------------------------------------------- hideable sidebar */
+
+.nav-head { display: none; }
+.nav-show { display: none; }
+
+@media (min-width: 900px) {
+  .nav-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 16px; padding: 0 4px 0 12px;
+  }
+  .nav-brand { margin: 0; }
+
+  /* Transparent: the sidebar is a column of controls sitting on the page,
+     not a panel bolted to the side of it. The content is inset by the
+     sidebar's width, so nothing scrolls underneath — the blur is there for
+     the full-bleed hero, which does. */
+  .tabbar {
+    background: transparent;
+    border-right: none;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .nav-toggle,
+  .nav-show {
+    flex: none;
+    width: 34px; height: 34px;
+    display: grid; place-items: center;
+    border: none; border-radius: var(--r-md);
+    background: transparent; cursor: pointer;
+  }
+  .nav-toggle svg,
+  .nav-show svg { width: 18px; height: 18px; fill: rgb(255 255 255 / var(--o-muted)); }
+  .nav-toggle:hover,
+  .nav-show:hover { background: rgb(255 255 255 / var(--o-selected)); }
+  .nav-toggle:hover svg,
+  .nav-show:hover svg { fill: #fff; }
+
+  /* Each item carries its own background, since the bar behind them no
+     longer provides one. */
+  .tab-item[aria-selected="true"] { background: var(--bg-card); }
+
+  /* Hidden: gone completely, and the content takes the whole window. */
+  body.nav-hidden { --nav-w: 0px; }
+  body.nav-hidden .tabbar {
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The way back. It floats over the content, so it needs a background of
+     its own to stay legible against a bright backdrop. */
+  .nav-show {
+    position: fixed; z-index: 40;
+    top: 18px; left: 18px;
+    width: 38px; height: 38px;
+    border-radius: var(--r-full);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 0.5px solid rgb(255 255 255 / var(--o-selected));
+  }
+  body.nav-hidden .nav-show { display: grid; }
+
+  /* No special case needed for the details and catalog screens, which have
+     their own back button in that corner: both hide #shell, and this button
+     lives inside it, so it goes with them.
+     The `hidden` attribute still wins over the display above, which is what
+     keeps this from appearing while the sidebar is on screen. */
+}
+
+@media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+  .tabbar { transition: transform var(--m-normal) var(--ease-standard),
+                        opacity var(--m-fast) var(--ease-standard); }
+  #shell { transition: padding-left var(--m-normal) var(--ease-standard); }
+}
+
+/* ------------------------------------------------- keep me signed in */
+
+.stay-signed-in {
+  display: flex; align-items: flex-start; gap: 11px;
+  margin: 4px 0 6px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 14px; line-height: 20px;
+}
+.stay-signed-in input {
+  flex: none;
+  width: 18px; height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.stay-signed-in small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px; line-height: 17px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* ==================================================== the player's frame
+
+   A plain <video> with the browser's own controls. All that is styled here
+   is its size and the black around it.
+   ==================================================================== */
+
+.watch-stage { position: relative; background: #000; }
+
+.watch-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 78dvh;
+  background: #000;
+}
+.watch-video:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+@media (min-width: 900px) {
+  .watch-video { max-height: 74dvh; }
+}
+
+/* The embedded external player, in place of the built-in one. */
+.watch-external {
+  position: absolute; inset: 0; z-index: 4;
+  width: 100%; height: 100%;
+  border: none; background: #000;
+}
+
+/* ---------------------------------------------------- hideable sidebar */
+
+.nav-head { display: none; }
+.nav-show { display: none; }
+
+@media (min-width: 900px) {
+  .nav-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 16px; padding: 0 4px 0 12px;
+  }
+  .nav-brand { margin: 0; }
+
+  /* Transparent: the sidebar is a column of controls sitting on the page,
+     not a panel bolted to the side of it. The content is inset by the
+     sidebar's width, so nothing scrolls underneath — the blur is there for
+     the full-bleed hero, which does. */
+  .tabbar {
+    background: transparent;
+    border-right: none;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .nav-toggle,
+  .nav-show {
+    flex: none;
+    width: 34px; height: 34px;
+    display: grid; place-items: center;
+    border: none; border-radius: var(--r-md);
+    background: transparent; cursor: pointer;
+  }
+  .nav-toggle svg,
+  .nav-show svg { width: 18px; height: 18px; fill: rgb(255 255 255 / var(--o-muted)); }
+  .nav-toggle:hover,
+  .nav-show:hover { background: rgb(255 255 255 / var(--o-selected)); }
+  .nav-toggle:hover svg,
+  .nav-show:hover svg { fill: #fff; }
+
+  /* Each item carries its own background, since the bar behind them no
+     longer provides one. */
+  .tab-item[aria-selected="true"] { background: var(--bg-card); }
+
+  /* Hidden: gone completely, and the content takes the whole window. */
+  body.nav-hidden { --nav-w: 0px; }
+  body.nav-hidden .tabbar {
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The way back. It floats over the content, so it needs a background of
+     its own to stay legible against a bright backdrop. */
+  .nav-show {
+    position: fixed; z-index: 40;
+    top: 18px; left: 18px;
+    width: 38px; height: 38px;
+    border-radius: var(--r-full);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 0.5px solid rgb(255 255 255 / var(--o-selected));
+  }
+  body.nav-hidden .nav-show { display: grid; }
+
+  /* No special case needed for the details and catalog screens, which have
+     their own back button in that corner: both hide #shell, and this button
+     lives inside it, so it goes with them.
+     The `hidden` attribute still wins over the display above, which is what
+     keeps this from appearing while the sidebar is on screen. */
+}
+
+@media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+  .tabbar { transition: transform var(--m-normal) var(--ease-standard),
+                        opacity var(--m-fast) var(--ease-standard); }
+  #shell { transition: padding-left var(--m-normal) var(--ease-standard); }
+}
+
+/* ------------------------------------------------- keep me signed in */
+
+.stay-signed-in {
+  display: flex; align-items: flex-start; gap: 11px;
+  margin: 4px 0 6px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 14px; line-height: 20px;
+}
+.stay-signed-in input {
+  flex: none;
+  width: 18px; height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.stay-signed-in small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px; line-height: 17px;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+
+/* ===================================================== the player's controls
+
+   One bar for both playback paths. The <video> element's own controls are
+   off: a converted stream's clock starts wherever ffmpeg began rather than at
+   the top of the film, so the native timeline and this one would disagree
+   about the same video. Everything here works in film time.
+   =========================================================================== */
+
+.watch-stage { position: relative; background: #000; }
+
+/* Catches a click anywhere on the picture. It sits under the control bar, so
+   pressing a button doesn't also toggle playback. */
+.watch-tap {
+  position: absolute; inset: 0; z-index: 1;
+  background: transparent; border: none; cursor: pointer;
+}
+
+.watch-controls {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  padding: 28px 16px 12px;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.85), transparent);
+  opacity: 0;
+  transition: opacity var(--m-fast) var(--ease-standard);
+}
+/* Visibility is driven by .show-ui on the stage (see controls.js): shown
+   on movement, hidden after a few idle seconds. Hovering alone must not pin
+   the controls on screen — in fullscreen the pointer is always "over" it. */
+
+.ctl {
+  flex: none;
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  border: none; border-radius: var(--r-full);
+  background: transparent; color: #fff; cursor: pointer;
+}
+.ctl svg { width: 22px; height: 22px; fill: #fff; }
+.ctl:hover { background: rgb(255 255 255 / 0.16); }
+
+.watch-controls .icon-pause,
+.watch-controls.is-paused .icon-play { display: block; }
+.watch-controls .icon-play,
+.watch-controls.is-paused .icon-pause { display: none; }
+
+#watch-mute .icon-muted { display: none; }
+#watch-mute.is-muted .icon-muted { display: block; }
+#watch-mute.is-muted .icon-sound { display: none; }
+
+.ctl-time {
+  flex: none;
+  font-size: 13px; font-variant-numeric: tabular-nums;
+  color: rgb(255 255 255 / var(--o-secondary));
+}
+
+/* The played portion is painted with a gradient rather than a second element,
+   so there is one thing to keep in sync. */
+.watch-seek {
+  flex: 1 1 auto; min-width: 0;
+  height: 4px; appearance: none;
+  border-radius: var(--r-full); cursor: pointer;
+  background: linear-gradient(to right,
+    var(--accent) var(--played, 0%),
+    rgb(255 255 255 / 0.28) var(--played, 0%));
+}
+.watch-volume {
+  flex: 0 0 76px;
+  height: 4px; appearance: none;
+  border-radius: var(--r-full); cursor: pointer;
+  background: rgb(255 255 255 / 0.28);
+}
+.watch-seek::-webkit-slider-thumb,
+.watch-volume::-webkit-slider-thumb {
+  appearance: none;
+  width: 13px; height: 13px; border-radius: var(--r-full);
+  background: var(--accent); border: none; cursor: pointer;
+}
+.watch-seek::-moz-range-thumb,
+.watch-volume::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: var(--r-full);
+  background: var(--accent); border: none; cursor: pointer;
+}
+.watch-seek:focus-visible,
+.watch-volume:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
+
+@media (max-width: 560px) {
+  #watch-volume, #watch-pip { display: none; }
+}
+
+/* Says whether it is waiting on the network or on ffmpeg, which are different
+   problems and need different patience. */
+.watch-spinner {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+  font-size: 13px; color: rgb(255 255 255 / var(--o-secondary));
+  background: rgb(0 0 0 / 0.35);
+}
+.spinner {
+  width: 34px; height: 34px;
+  border: 3px solid rgb(255 255 255 / 0.22);
+  border-top-color: #fff;
+  border-radius: var(--r-full);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+/* The embedded external player, in place of the built-in one. */
+.watch-external {
+  position: absolute; inset: 0; z-index: 4;
+  width: 100%; height: 100%;
+  border: none; background: #000;
+}
+
+/* ============================================ "Keep me signed in" checkbox
+
+   The global `input` rule (full width, padding, appearance: none) was being
+   applied to this checkbox too, which left it an invisible, unclickable box
+   whose state never showed. Restore a real checkbox. */
+.stay-signed-in input[type="checkbox"] {
+  -webkit-appearance: auto; appearance: auto;
+  width: 18px; height: 18px;
+  padding: 0; margin: 1px 0 0;
+  border: none; border-radius: 4px;
+  background: none;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ======================================================= unified player
+
+   One player on every device. The picture fills the screen; the controls,
+   menus, status and fallback all sit over it and fade when idle. These rules
+   come last and replace the older bar-above, buttons-below layout. */
+
+.screen-watch {
+  position: fixed; inset: 0; z-index: 70;
+  padding: 0; overflow: hidden;
+  background: #000;
+}
+.watch-stage {
+  position: absolute; inset: 0;
+  background: #000;
+  overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+}
+.watch-stage:not(.show-ui):not(.is-paused) { cursor: none; }
+
+#watch-video, .watch-video {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  max-height: none; aspect-ratio: auto;
+  object-fit: contain;
+  background: #000;
+}
+
+/* Subtitles: larger, softer box, and lifted clear of the controls. */
+#watch-video::cue {
+  font-family: var(--font, system-ui, sans-serif);
+  font-size: clamp(16px, 2.6vw, 34px);
+  line-height: 1.3;
+  color: #fff;
+  background: rgb(0 0 0 / 0.55);
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+}
+
+.watch-tap { position: absolute; inset: 0; z-index: 1; background: transparent; border: none; cursor: inherit; }
+
+/* Top: back and "2 of 8" */
+.watch-top {
+  position: absolute; left: 0; right: 0; top: 0; z-index: 3;
+  display: flex; align-items: center; gap: 12px;
+  padding: calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 40px max(16px, env(safe-area-inset-left));
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.7), transparent);
+}
+.watch-position {
+  font-size: 13px; font-weight: 600;
+  color: rgb(255 255 255 / 0.8);
+}
+
+/* Bottom: seek row, then buttons */
+.watch-controls {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  padding: 48px max(16px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: linear-gradient(to top, rgb(0 0 0 / 0.85), rgb(0 0 0 / 0.45) 55%, transparent);
+}
+.watch-top, .watch-controls {
+  opacity: 0; pointer-events: none;
+  transition: opacity 220ms var(--ease-standard);
+}
+.watch-stage.show-ui .watch-top, .watch-stage.show-ui .watch-controls,
+.watch-stage.is-paused .watch-top, .watch-stage.is-paused .watch-controls {
+  opacity: 1; pointer-events: auto;
+}
+
+.watch-seek-row { display: flex; align-items: center; gap: 12px; }
+.watch-buttons { display: flex; align-items: center; gap: 4px; }
+.watch-spacer { flex: 1 1 auto; }
+
+.ctl {
+  flex: none; position: relative;
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  padding: 0; border: none; border-radius: var(--r-full);
+  background: transparent; color: #fff; cursor: pointer;
+}
+.ctl svg { width: 24px; height: 24px; fill: #fff; }
+.ctl:hover { background: rgb(255 255 255 / 0.14); }
+.ctl:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.ctl:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.ctl[hidden] { display: none; }
+.ctl-big { width: 52px; height: 52px; }
+.ctl-big svg { width: 32px; height: 32px; }
+#watch-back { background: rgb(255 255 255 / 0.12); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+
+#watch-play .icon-play { display: none; }
+#watch-play .icon-pause { display: block; }
+.watch-stage.is-paused #watch-play .icon-play { display: block; }
+.watch-stage.is-paused #watch-play .icon-pause { display: none; }
+
+/* Subtitles button lights up while a track is on */
+#watch-subs-btn.is-on::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: 7px;
+  height: 2px; border-radius: 2px; background: var(--accent);
+}
+
+.ctl-time {
+  flex: none; min-width: 44px;
+  font-size: 13px; font-variant-numeric: tabular-nums; text-align: center;
+  color: rgb(255 255 255 / 0.9);
+}
+
+.watch-seek {
+  flex: 1 1 auto; min-width: 0;
+  height: 5px; margin: 0; padding: 0; border: none;
+  appearance: none; -webkit-appearance: none;
+  border-radius: var(--r-full); cursor: pointer;
+  background: linear-gradient(to right,
+    var(--accent) var(--played, 0%),
+    rgb(255 255 255 / 0.5) var(--played, 0%),
+    rgb(255 255 255 / 0.5) var(--buffered, 0%),
+    rgb(255 255 255 / 0.22) var(--buffered, 0%));
+  transition: height 120ms;
+}
+.watch-seek:hover { height: 7px; }
+.watch-volume {
+  flex: 0 0 84px; width: 84px;
+  height: 4px; margin: 0 8px 0 0; padding: 0; border: none;
+  appearance: none; -webkit-appearance: none;
+  border-radius: var(--r-full); cursor: pointer;
+  background: rgb(255 255 255 / 0.35);
+}
+.watch-seek::-webkit-slider-thumb, .watch-volume::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: var(--r-full);
+  background: #fff; border: none;
+}
+.watch-seek::-moz-range-thumb, .watch-volume::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: var(--r-full);
+  background: #fff; border: none;
+}
+
+/* Menus (audio, subtitles, episodes) float above the buttons, bottom right */
+.watch-menu {
+  position: absolute; z-index: 5;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(118px + env(safe-area-inset-bottom));
+  width: min(340px, calc(100% - 32px));
+  max-height: min(60%, 420px);
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgb(24 24 28 / 0.94);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+.watch-menu[hidden] { display: none; }
+.watch-menu-title {
+  margin: 6px 10px 6px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  color: rgb(255 255 255 / 0.6);
+}
+.watch-menu-list { display: flex; flex-direction: column; }
+.watch-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 11px 12px 11px 36px;
+  border: none; border-radius: 10px;
+  background: transparent; color: #fff; text-align: left;
+  font: inherit; font-size: 14px; line-height: 19px;
+  cursor: pointer; position: relative;
+}
+.watch-menu-item:hover, .watch-menu-item:focus-visible { background: rgb(255 255 255 / 0.1); outline: none; }
+.watch-menu-item[aria-checked="true"] { font-weight: 700; }
+.watch-menu-item[aria-checked="true"]::before {
+  content: ""; position: absolute; left: 14px; top: 50%;
+  width: 10px; height: 5px; margin-top: -4px;
+  border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent);
+  transform: rotate(-45deg);
+}
+.watch-queue-panel .queue-item { color: #fff; border-radius: 10px; padding: 10px; }
+.watch-queue-panel .queue-item[aria-current="true"] { background: rgb(255 255 255 / 0.12); font-weight: 700; }
+#watch-queue-wrap { padding: 8px; }
+
+/* Status pill, top centre */
+.watch-status {
+  position: absolute; z-index: 4;
+  left: 50%; top: calc(18px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  max-width: min(640px, calc(100% - 140px));
+  margin: 0; padding: 8px 14px;
+  border-radius: var(--r-full);
+  background: rgb(0 0 0 / 0.6);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  font-size: 13px; line-height: 18px; text-align: center;
+  color: rgb(255 255 255 / 0.9);
+}
+.watch-status[hidden] { display: none; }
+
+.watch-spinner { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; pointer-events: none; background: none; }
+.watch-spinner[hidden] { display: none; }
+
+/* When something goes wrong: a card in the middle of the picture */
+.watch-fallback {
+  position: absolute; z-index: 6;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(520px, calc(100% - 32px));
+  max-height: calc(100% - 32px); overflow-y: auto;
+  margin: 0;
+  background: rgb(24 24 28 / 0.96);
+}
+.watch-fallback[hidden] { display: none; }
+
+.watch-external { z-index: 2; }
+
+/* Small phones: fewer buttons, so the essentials stay reachable. */
+@media (max-width: 560px) {
+  #watch-volume, #watch-pip, #watch-rew, #watch-fwd { display: none; }
+  .ctl { width: 40px; height: 40px; }
+  .watch-menu { bottom: calc(108px + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; }
+}
+@media (hover: none) {
+  #watch-volume { display: none; }
+}
+
+/* Options menu: Source / Audio / Subtitles sections in one panel */
+.watch-menu { width: min(400px, calc(100% - 32px)); max-height: min(70%, 560px); }
+.watch-menu-title:not(:first-child) { margin-top: 14px; }
+.watch-menu-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+.watch-menu-item:disabled { opacity: 0.4; cursor: default; }
+.watch-menu-label { display: block; }
+.watch-menu-detail { display: block; font-size: 12px; line-height: 16px; font-weight: 400; color: rgb(255 255 255 / 0.6); }
+.watch-menu-empty { margin: 10px 12px; font-size: 14px; color: rgb(255 255 255 / 0.7); }
+#watch-options-btn.is-on::after {
+  content: ""; position: absolute; right: 9px; top: 9px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+}
+
+/* Labelled Source / Audio / Subtitles buttons — always visible */
+.ctl-labeled {
+  width: auto; height: 40px;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 14px 0 11px;
+  border-radius: var(--r-full);
+  background: rgb(255 255 255 / 0.12);
+  font: inherit; font-size: 14px; font-weight: 600; color: #fff;
+  margin-left: 6px;
+}
+.ctl-labeled svg { width: 20px; height: 20px; }
+.ctl-labeled:hover { background: rgb(255 255 255 / 0.22); }
+.ctl-labeled[aria-expanded="true"] { background: #fff; color: #000; }
+.ctl-labeled[aria-expanded="true"] svg { fill: #000; }
+#watch-subs-btn.is-on::after { left: 14px; right: 14px; bottom: 4px; }
+/* Phones: icons only, so all three still fit */
+@media (max-width: 700px) {
+  .ctl-labeled span { display: none; }
+  .ctl-labeled { width: 40px; padding: 0; justify-content: center; margin-left: 2px; }
+}
+
+
+/* Settings → Default languages */
+.settings-langs .settings-row { align-items: center; gap: 16px; cursor: pointer; }
+.settings-langs .lang-select { margin: 0; width: auto; min-width: 180px; max-width: 60%; }
+
+/* Keyboard users keep the controls while tabbing through them; a mouse
+   click leaves no focus ring, so it doesn't pin them. */
+.watch-stage:has(.watch-controls :focus-visible) .watch-controls,
+.watch-stage:has(.watch-controls :focus-visible) .watch-top { opacity: 1; pointer-events: auto; }
+
+/* Blu-ray (PGS) subtitles, drawn over the picture by libpgs */
+.watch-pgs {
+  position: absolute; inset: 0; z-index: 1;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.watch-tap { z-index: 1; }
+
+/* Subtitle timing row in the Subtitles menu */
+.watch-timing {
+  display: flex; align-items: center; gap: 6px;
+  margin: 10px 4px 4px; padding-top: 10px;
+  border-top: 1px solid rgb(255 255 255 / 0.12);
+}
+.watch-timing-label { flex: 1 1 auto; padding-left: 8px; font-size: 13px; font-weight: 600; color: rgb(255 255 255 / 0.7); }
+.watch-timing-value { min-width: 64px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.watch-timing-btn {
+  padding: 7px 10px; border: none; border-radius: 8px;
+  background: rgb(255 255 255 / 0.1); color: #fff;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.watch-timing-btn:hover { background: rgb(255 255 255 / 0.2); }
+
+/* Player heading: film, or show + season/episode/title */
+.watch-heading { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+#watch-heading-title {
+  font-size: 16px; font-weight: 700; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#watch-heading-detail {
+  font-size: 13px; font-weight: 500; color: rgb(255 255 255 / 0.75);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#watch-heading-detail:empty { display: none; }
+
+/* Big play/pause in the middle, touch screens only */
+.watch-center-play {
+  position: absolute; z-index: 3;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 76px; height: 76px; padding: 0;
+  display: none; place-items: center;
+  border: none; border-radius: 50%;
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  color: #fff; cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity 220ms var(--ease-standard);
+}
+.watch-center-play svg { width: 40px; height: 40px; fill: #fff; }
+.watch-center-play .icon-play { display: none; margin-left: 4px; }
+.watch-stage.is-paused .watch-center-play .icon-play { display: block; }
+.watch-stage.is-paused .watch-center-play .icon-pause { display: none; }
+@media (hover: none), (pointer: coarse) {
+  .watch-center-play { display: grid; }
+  .watch-stage.show-ui .watch-center-play,
+  .watch-stage.is-paused .watch-center-play { opacity: 1; pointer-events: auto; }
+  /* While a stream is loading the spinner owns the middle. */
+  .watch-stage:has(.watch-spinner:not([hidden])) .watch-center-play { opacity: 0; pointer-events: none; }
+}
+
+/* The title sits beside the back button, where "1 of 8" used to be, and
+   shows while the film is paused. */
+.watch-heading { opacity: 0; transition: opacity 220ms var(--ease-standard); }
+.watch-stage.is-paused .watch-heading { opacity: 1; }
+
+/* iPhone notch / Dynamic Island. The page draws edge to edge
+   (viewport-fit=cover), so the picture is kept inside the safe area: in
+   landscape the island sits in the black bar beside the film instead of on
+   it, and in portrait above it. The background stays black edge to edge, and
+   the controls already pad themselves the same way. */
+#watch-video, .watch-video, .watch-pgs, .watch-external {
+  top: env(safe-area-inset-top, 0px);
+  left: env(safe-area-inset-left, 0px);
+  right: auto; bottom: auto;
+  /* Explicit sizes: a <video> given width/height "auto" takes the film's
+     own pixel size (1920x1080) instead of filling the screen, which is what
+     cropped the picture and left it off-centre. */
+  width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  height: calc(100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-width: none; max-height: none;
+}
+
+/* Time bubble over the seek bar while dragging or hovering */
+.watch-seek-tip {
+  position: absolute; z-index: 4;
+  transform: translate(-50%, calc(-100% - 10px));
+  padding: 5px 9px; border-radius: 8px;
+  background: rgb(0 0 0 / 0.8);
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: #fff;
+  pointer-events: none; white-space: nowrap;
+}
+.watch-seek-tip[hidden] { display: none; }
+/* A taller hit area for the seek bar on touch screens */
+@media (pointer: coarse) {
+  .watch-seek { height: 6px; }
+  .watch-seek::-webkit-slider-thumb { width: 20px; height: 20px; }
+  .watch-seek::-moz-range-thumb { width: 20px; height: 20px; }
+  .watch-seek-row { padding: 8px 0; }
+}
+
+/* Phones: the row overlaps the banner's bottom, so its rounded corners
+   showed as a thin curved line behind the row. Square them off. */
+@media (max-width: 899px) {
+  .hero { border-radius: 0; }
+}
+
+/* ===================================================== phone, sideways
+
+   A phone held sideways is short and wide. The bottom tab bar and a tall
+   banner used up nearly all of its 390-odd pixels of height, leaving the
+   rows off screen. Sideways, the tabs become a slim rail down the left
+   (clear of the notch), the banner is short with its text on the left like
+   the desktop, and posters are smaller so a row fits on screen. */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
+  :root {
+    --rail-w: calc(64px + env(safe-area-inset-left, 0px));
+    --tabbar-h: 0px;
+    --poster-w: 104px;
+    --poster-landscape-w: 186px;
+    --hero-overlap: 18px;
+  }
+
+  .tabbar {
+    left: 0; top: 0; bottom: 0; right: auto;
+    width: var(--rail-w); height: 100dvh;
+    flex-direction: column; justify-content: center; gap: 6px;
+    padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+    border-top: none;
+    border-right: 0.5px solid rgb(255 255 255 / var(--o-subtle));
+  }
+  .tabbar .nav-head { display: none; }
+  .tab-item { flex: 0 0 auto; width: 64px; height: 52px; }
+  .tab-label { display: none; }
+
+  #shell { padding-left: var(--rail-w); }
+  .screen { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); padding-right: max(var(--gutter), env(safe-area-inset-right, 0px)); }
+  #tab-home { padding-right: 0; }
+
+  .hero {
+    height: min(68dvh, 300px);
+    aspect-ratio: auto;
+    min-height: 0; max-height: none;
+    border-radius: 0;
+  }
+  .hero-slide::before {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(to right, rgb(0 0 0 / 0.6) 0%, rgb(0 0 0 / 0.2) 45%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-content { max-width: 60%; padding: 0 var(--gutter) calc(var(--hero-overlap) + 18px); text-align: left; }
+  .hero-title { font-size: 24px; }
+  .hero-meta, .hero-actions { justify-content: flex-start; }
+  .hero-meta { margin-top: 6px; }
+  .hero-actions { margin-top: 10px; }
+  .hero-play { padding: 9px 20px; font-size: 14px; }
+  .hero-dots { justify-content: flex-end; padding-right: calc(var(--gutter) + 8px); }
+
+  .row { margin-bottom: 20px; }
+  .row-title { font-size: 16px; }
+
+  /* Things that sat above the bottom bar now sit at the bottom. */
+  .screen-catalog { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ===================================================== continue watching */
+.cw-card {
+  position: relative;
+  flex: 0 0 var(--cw-w, 260px); width: var(--cw-w, 260px);
+}
+.cw-play {
+  position: relative; display: block;
+  width: 100%; aspect-ratio: 16 / 9;
+  padding: 0; border: none; border-radius: 12px; overflow: hidden;
+  background: var(--bg-card, #1c1c1e); cursor: pointer;
+}
+.cw-art {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transition: transform 300ms var(--ease-standard);
+}
+.cw-shade { position: absolute; inset: 0; background: linear-gradient(to top, rgb(0 0 0 / 0.65), transparent 55%); }
+.cw-icon {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 46px; height: 46px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  opacity: 0.9;
+}
+.cw-icon svg { width: 22px; height: 22px; fill: #fff; margin-left: 2px; }
+.cw-bar {
+  position: absolute; left: 10px; right: 10px; bottom: 9px;
+  height: 4px; border-radius: 2px; background: rgb(255 255 255 / 0.3); overflow: hidden;
+}
+.cw-fill { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.cw-title {
+  margin: 8px 0 0; font-size: 14px; font-weight: 600; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cw-detail {
+  margin: 2px 0 0; font-size: 12px; color: rgb(255 255 255 / 0.65);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cw-detail:empty { display: none; }
+.cw-remove {
+  position: absolute; top: 6px; right: 6px; z-index: 1;
+  width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgb(0 0 0 / 0.55); cursor: pointer;
+  opacity: 0; transition: opacity 160ms;
+}
+.cw-remove svg { width: 14px; height: 14px; fill: #fff; }
+.cw-card:hover .cw-remove, .cw-remove:focus-visible { opacity: 1; }
+@media (hover: none) { .cw-remove { opacity: 1; width: 26px; height: 26px; } }
+@media (hover: hover) {
+  .cw-play:hover .cw-art { transform: scale(1.04); }
+  .cw-play:hover .cw-icon { opacity: 1; background: var(--accent); }
+}
+@media (max-width: 899px) { .cw-card { --cw-w: 220px; } }
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) { .cw-card { --cw-w: 200px; } }
+@media (min-width: 1500px) { .cw-card { --cw-w: 320px; } }
+
+/* Genres on a title's page: separate pills, not one run-together word. */
+.genre-row {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 4px 0 16px;
+}
+.genre-row[hidden] { display: none; }
+.genre-chip {
+  padding: 5px 12px;
+  border-radius: var(--r-full);
+  background: rgb(255 255 255 / 0.1);
+  border: 0.5px solid rgb(255 255 255 / 0.14);
+  font-size: 13px; line-height: 18px; font-weight: 600;
+  color: rgb(255 255 255 / 0.9);
+  white-space: nowrap;
+}
+.details-meta { margin-bottom: 14px; line-height: 20px; }
+
+/* Portrait phone: the <video> box is sized to the picture itself and
+   centred, instead of filling the whole tall screen. Subtitles are drawn at
+   the bottom of the video box, so they now sit on the bottom of the film
+   rather than down by the controls in the empty black below it. */
+@media (orientation: portrait) {
+  #watch-video, .watch-video {
+    top: 50%;
+    height: auto;
+    max-height: calc(100% - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    transform: translateY(-50%);
+  }
+}
+
+/* Live TV in the player: a LIVE badge instead of a seek bar. */
+.watch-live-badge { display: none; }
+.watch-stage.is-live .watch-seek-row,
+.watch-stage.is-live #watch-rew,
+.watch-stage.is-live #watch-fwd { display: none; }
+.watch-stage.is-live .watch-live-badge {
+  display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;
+  padding: 4px 10px; margin-left: 4px; border-radius: 6px;
+  background: rgb(230 40 40 / 0.9);
+  font-size: 12px; font-weight: 800; letter-spacing: 0.8px; color: #fff;
+}
+.watch-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #fff; animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: 0.35; } }
+
+/* Square artwork (Live TV station logos) and landscape artwork, shown whole. */
+.poster.shape-square .art { aspect-ratio: 1 / 1; background: rgb(255 255 255 / 0.06); }
+.poster.shape-square .art img { object-fit: cover; }
+.poster.shape-landscape .art { aspect-ratio: 16 / 9; }
+.rail .poster.shape-landscape { flex-basis: var(--poster-landscape-w); width: var(--poster-landscape-w); }
+.details-desc { white-space: pre-line; }
+
+/* Live channels on Continue watching: the station logo whole, on a soft
+   backdrop, with a LIVE badge instead of a progress bar. */
+.cw-live .cw-play { background: radial-gradient(circle at 50% 40%, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.03)); }
+.cw-live .cw-art { background-size: contain; background-repeat: no-repeat; inset: 14% 22%; }
+.cw-live .cw-shade { background: linear-gradient(to top, rgb(0 0 0 / 0.45), transparent 50%); }
+.cw-live-badge {
+  position: absolute; left: 10px; bottom: 9px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-radius: 5px;
+  background: rgb(230 40 40 / 0.92);
+  font-size: 11px; font-weight: 800; letter-spacing: 0.7px; color: #fff;
+}

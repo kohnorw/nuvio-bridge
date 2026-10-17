@@ -1,0 +1,19 @@
+{
+  "name": "nuvio-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted web front end for a Nuvio account that plays your streams on any device",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "lint": "eslint src public/app.js public/player.js public/platform.js public/sw.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  }
+}
