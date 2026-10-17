@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=93';
-import * as controls from './controls.js?v=93';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=94';
+import * as controls from './controls.js?v=94';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -394,6 +394,7 @@ async function play(next, opts = {}) {
       // Safari plays HLS itself and keeps time by the playlist; the server
       // then makes sure every segment starts exactly where it says.
       nativeHls: nativeHls(video) || undefined,
+      encodeVideo: opts.encodeVideo === true || undefined,
     });
   } catch (err) {
     if (isStale(gen)) return;
@@ -424,6 +425,8 @@ async function play(next, opts = {}) {
     audio: reply.audio ?? opts.audio ?? 0,
     burn: reply.burn ?? null,
     forcedTranscode: opts.forceTranscode === true,
+    videoCopy: Boolean(reply.videoCopy),
+    encodedVideo: opts.encodeVideo === true,
   };
   state.embeddedSubs = reply.subtitleTracks || [];
   state.embeddedDefault = reply.preferredSubtitle ?? null;
@@ -634,47 +637,68 @@ const DECODE_GRACE_MS = 45_000;
 let decodeTrouble = null;
 
 function retryDecode(err) {
-  const { video } = state;
+  const { video, session } = state;
   const gen = state.gen;
   if (!decodeTrouble || decodeTrouble.gen !== gen) {
-    decodeTrouble = { gen, since: Date.now(), attempts: 0 };
-    // Any progress at all ends the trouble.
-    const clear = () => { if (decodeTrouble?.gen === gen) decodeTrouble = null; };
-    video.addEventListener('playing', clear, { once: true });
+    decodeTrouble = { gen, since: Date.now(), attempts: 0, at: video.currentTime || 0 };
+    // Trouble ends only when playback has really recovered: ten seconds
+    // past where it started. A frame or two between errors doesn't count —
+    // that reset the clock before, and the retries went on for ever.
+    const t = decodeTrouble;
+    const watch = () => {
+      if (decodeTrouble !== t || isStale(gen)) { video.removeEventListener('timeupdate', watch); return; }
+      if (video.currentTime > t.at + 10 && !video.paused) {
+        decodeTrouble = null;
+        video.removeEventListener('timeupdate', watch);
+        if (/trouble decoding/.test($('#watch-status')?.textContent || '')) setStatus('');
+      }
+    };
+    video.addEventListener('timeupdate', watch);
+    t.deadline = setTimeout(() => {
+      if (decodeTrouble !== t || isStale(gen)) return;
+      decodeTrouble = null;
+      showFallback(describeError(err));
+    }, DECODE_GRACE_MS);
   }
   const t = decodeTrouble;
-  if (Date.now() - t.since >= DECODE_GRACE_MS) {
+  if (t.pending) return; // a retry is already on its way
+  t.attempts += 1;
+  note(`decode error ${err?.code}, attempt ${t.attempts}`);
+
+  // A remux this device won't decode (an H.264 profile or level the phone
+  // can't do, a stream it dislikes) won't decode on the third try either.
+  // After one plain retry, have the server convert the picture instead —
+  // what every device can play. That restarts the stream, so the deadline
+  // starts over for it.
+  if (t.attempts >= 2 && session?.mode === 'hls' && session.videoCopy && !session.encodedVideo
+      && current()?.transcodeKey) {
+    clearTimeout(t.deadline);
     decodeTrouble = null;
-    showFallback(describeError(err));
+    setStatus('This device can’t play the file as it is — converting it…');
+    note('remux undecodable — converting the video instead');
+    play(state.index, { encodeVideo: true, audio: session.audio, resumeAt: t.at || undefined });
     return;
   }
-  t.attempts += 1;
+
   setStatus('Having trouble decoding this — retrying…');
-  note(`decode error ${err?.code}, retry ${t.attempts}`);
-  const at = video.currentTime || 0;
+  t.pending = true;
+  const at = video.currentTime || t.at;
   setTimeout(() => {
+    t.pending = false;
     if (isStale(gen) || decodeTrouble !== t) return;
     if (state.hls) {
-      // hls.js: rebuild the decoder; every other time, also try swapping the
-      // audio codec setup, the usual cure for an AAC/HE-AAC mismatch.
       if (t.attempts % 2 === 0) state.hls.swapAudioCodec();
       state.hls.recoverMediaError();
     } else {
       const src = video.currentSrc || video.getAttribute('src');
       if (src) {
         video.src = src;
-        video.addEventListener('loadedmetadata', () => { if (at) video.currentTime = at + 0.5; }, { once: true });
+        // Step just past the spot that failed.
+        video.addEventListener('loadedmetadata', () => { video.currentTime = at + 1; }, { once: true });
       }
     }
     video.play()?.catch?.(() => {});
-    // If nothing has played by the end of the grace period, say so.
-    setTimeout(() => {
-      if (!isStale(gen) && decodeTrouble === t && Date.now() - t.since >= DECODE_GRACE_MS - 100) {
-        decodeTrouble = null;
-        showFallback(describeError(err));
-      }
-    }, Math.max(0, DECODE_GRACE_MS - (Date.now() - t.since)));
-  }, Math.min(5000, 1000 * t.attempts));
+  }, Math.min(5000, 1500 * t.attempts));
 }
 
 function describeError(err) {

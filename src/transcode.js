@@ -714,7 +714,7 @@ function thaw(s) {
  * @param {string} url
  * @param {{ audio?: number, seek?: number, burn?: number|null, plan?: object }} opts
  */
-export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false } = {}) {
+export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false } = {}) {
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   if (busy()) throw new Error('Too many conversions are already running.');
 
@@ -751,6 +751,11 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   // a conversion instead, which lands every segment exactly.
   if (aligned && exact && !bounds && details.videoCopy && burn == null) {
     details = { ...details, videoCopy: false };
+  }
+  // The player couldn't decode the remux: convert the picture instead.
+  if (encode && details.videoCopy) {
+    details = { ...details, videoCopy: false };
+    bounds = null;
   }
   const s = {
     sid,

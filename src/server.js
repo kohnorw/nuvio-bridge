@@ -1592,6 +1592,9 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       burn,
       plan,
       aligned: req.body?.nativeHls === true,
+      // Sent when the player has already failed to decode this file as a
+      // remux: convert the video rather than copying it again.
+      encode: req.body?.encodeVideo === true,
     });
     // The subtitle the player will turn on by itself: start reading it now,
     // from where playback starts, so it's there with the first frame.
