@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=96';
-import * as controls from './controls.js?v=96';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=97';
+import * as controls from './controls.js?v=97';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -225,6 +225,7 @@ function leave() {
 export function init() {
   if (state.initialised) return;
   state.initialised = true;
+  renderQualityMenu();
 
   $('#watch-back').addEventListener('click', (event) => { event.preventDefault(); leave(); });
 
@@ -404,6 +405,7 @@ async function play(next, opts = {}) {
       // then makes sure every segment starts exactly where it says.
       nativeHls: nativeHls(video) || undefined,
       encodeVideo: opts.encodeVideo === true || undefined,
+      quality: opts.quality || startLevel(),
     });
   } catch (err) {
     if (isStale(gen)) return;
@@ -437,13 +439,21 @@ async function play(next, opts = {}) {
     forcedTranscode: opts.forceTranscode === true,
     videoCopy: Boolean(reply.videoCopy),
     encodedVideo: opts.encodeVideo === true,
+    quality: reply.quality || 'original',
+    streamKbps: reply.streamKbps || reply.bitRate || null,
+    bitRate: reply.bitRate || null,
+    height: reply.height || null,
+    sourceHeight: reply.sourceHeight || null,
+    live: Boolean(reply.live),
   };
+  renderQualityMenu();
   state.embeddedSubs = reply.subtitleTracks || [];
   state.embeddedDefault = reply.preferredSubtitle ?? null;
   state.embeddedKnown = true;
   renderSubtitleMenu();
   chooseDefaultSubtitle();
 
+  watchQuality(gen);
   if (reply.mode === 'direct') {
     $('#watch-stage').classList.remove('is-live');
     load(gen, { src: reply.url, type: 'video/mp4', resumeAt });
@@ -756,7 +766,8 @@ function startHeartbeat(gen) {
     const sid = state.session?.sid;
     if (isStale(gen) || !sid) { clearInterval(state.heartbeat); return; }
     try {
-      await post(`/api/transcode/heartbeat/${sid}`);
+      const beat = await post(`/api/transcode/heartbeat/${sid}`);
+      if (beat?.deliveryKbps) state.deliveryKbps = beat.deliveryKbps;
     } catch {
       if (isStale(gen)) return;
       clearInterval(state.heartbeat);
@@ -1037,6 +1048,176 @@ function option(value, label) {
   el.value = value;
   el.textContent = label;
   return el;
+}
+
+// --------------------------------------------------------------- quality
+//
+// Plex-style quality. Original plays the file as it is wherever this device
+// allows; each level below is a conversion held to a bitrate a slower
+// connection carries. Auto (the default) starts where this device last
+// played smoothly and moves between levels as the connection changes:
+//
+//   down — a stall of 4 s or more, or two stalls of a second or more within
+//          a minute: the stream is more than the connection carries.
+//   up   — three minutes without a stall and a measured speed comfortably
+//          above what the next level up needs (or, where nothing can be
+//          measured, five quiet minutes). A step up that stalls within two
+//          minutes blocks further tries for twenty.
+//
+// Switching restarts the stream where it is, keeping audio and subtitles.
+
+const LEVELS = ['original', '1080', '720', '480', '360'];
+const LEVEL_KBPS = { 1080: 8000, 720: 4000, 480: 1500, 360: 700 };
+const LEVEL_NAMES = { auto: 'Auto', original: 'Original', 1080: '1080p', 720: '720p', 480: '480p', 360: '360p' };
+const QUALITY_KEY = 'nuvio.quality';
+const AUTO_KEY = 'nuvio.autoLevel';
+const AUTO_MEMORY_MS = 6 * 60 * 60_000;
+
+function qualityPref() {
+  try {
+    const value = localStorage.getItem(QUALITY_KEY);
+    return LEVEL_NAMES[value] ? value : 'auto';
+  } catch { return 'auto'; }
+}
+
+// The level a new stream starts at.
+function startLevel() {
+  const pref = qualityPref();
+  if (pref !== 'auto') return pref;
+  try {
+    const saved = JSON.parse(localStorage.getItem(AUTO_KEY) || 'null');
+    if (saved && LEVELS.includes(saved.level) && Date.now() - saved.at < AUTO_MEMORY_MS) return saved.level;
+  } catch { /* nothing saved */ }
+  return 'original';
+}
+
+function rememberAutoLevel(level) {
+  try { localStorage.setItem(AUTO_KEY, JSON.stringify({ level, at: Date.now() })); } catch { /* private mode */ }
+}
+
+function renderQualityMenu() {
+  const select = $('#watch-quality');
+  if (!select) return;
+  const playing = state.session?.quality;
+  select.replaceChildren();
+  for (const value of ['auto', ...LEVELS]) {
+    const el = option(value, LEVEL_NAMES[value]);
+    if (value === 'auto' && playing) el.dataset.detail = `now ${LEVEL_NAMES[playing]}`;
+    else if (value === 'original' && state.session?.bitRate) el.dataset.detail = `${(state.session.bitRate / 1000).toFixed(1)} Mbps`;
+    else if (LEVEL_KBPS[value]) el.dataset.detail = `${(LEVEL_KBPS[value] / 1000).toFixed(1)} Mbps`;
+    select.append(el);
+  }
+  select.value = qualityPref();
+  select.onchange = () => {
+    try { localStorage.setItem(QUALITY_KEY, select.value); } catch { /* private mode */ }
+    const target = select.value === 'auto' ? (state.session?.quality || 'original') : select.value;
+    if (state.session && target !== state.session.quality && !state.session.live) switchLevel(target, 'chosen');
+    renderQualityMenu();
+  };
+}
+
+function switchLevel(level, why) {
+  const { video, session } = state;
+  if (!session || !current()?.transcodeKey) return;
+  note(`quality: ${session.quality} → ${level} (${why})`);
+  if (why !== 'chosen') {
+    setStatus(LEVELS.indexOf(level) > LEVELS.indexOf(session.quality)
+      ? `Lowering quality to ${LEVEL_NAMES[level]} to keep playback smooth…`
+      : `Connection looks good — raising quality to ${LEVEL_NAMES[level]}…`);
+    setTimeout(() => { if (/quality to/.test($('#watch-status')?.textContent || '')) setStatus(''); }, 5000);
+  }
+  if (qualityPref() === 'auto') rememberAutoLevel(level);
+  play(state.index, {
+    quality: level,
+    audio: session.audio,
+    resumeAt: video?.currentTime || undefined,
+    forceTranscode: level !== 'original' || undefined,
+  });
+}
+
+// The next level down worth switching to: one that actually costs less
+// than what's playing now.
+function lowerLevel() {
+  const { session } = state;
+  const now = session.streamKbps || LEVEL_KBPS[session.quality] || 20000;
+  for (let i = LEVELS.indexOf(session.quality) + 1; i < LEVELS.length; i += 1) {
+    if (LEVEL_KBPS[LEVELS[i]] < now * 0.75) return LEVELS[i];
+  }
+  return null;
+}
+
+function higherLevel() {
+  const i = LEVELS.indexOf(state.session.quality);
+  if (i <= 0) return null;
+  // A level taller than the file itself gains nothing: skip to Original.
+  const source = state.session.sourceHeight;
+  for (let j = i - 1; j > 0; j -= 1) {
+    if (!source || Number(LEVELS[j]) <= source) return LEVELS[j];
+  }
+  return 'original';
+}
+
+let qualityTimer = null;
+
+function watchQuality(gen) {
+  clearInterval(qualityTimer);
+  const { video } = state;
+  const started = Date.now();
+  const stalls = [];
+  let stallStart = 0;
+  let lastSeek = 0;
+  state.deliveryKbps = null;
+
+  const onWaiting = () => {
+    // A seek, or the start, waits by nature: not the connection's fault.
+    if (Date.now() - lastSeek < 3000 || video.currentTime < 0.5 || Date.now() - started < 8000) return;
+    stallStart ||= Date.now();
+  };
+  const onPlaying = () => {
+    if (!stallStart) return;
+    stalls.push({ at: Date.now(), ms: Date.now() - stallStart });
+    stallStart = 0;
+  };
+  const onSeeking = () => { lastSeek = Date.now(); stallStart = 0; };
+  video.addEventListener('waiting', onWaiting);
+  video.addEventListener('playing', onPlaying);
+  video.addEventListener('seeking', onSeeking);
+
+  qualityTimer = setInterval(() => {
+    if (isStale(gen) || !state.session || state.session.live) {
+      clearInterval(qualityTimer);
+      video.removeEventListener('waiting', onWaiting);
+      video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('seeking', onSeeking);
+      return;
+    }
+    if (qualityPref() !== 'auto' || video.paused) return;
+    const now = Date.now();
+    // A stall still going counts as it runs.
+    const live = stallStart ? [{ at: now, ms: now - stallStart }] : [];
+    const recent = [...stalls, ...live].filter((x) => now - x.at < 60_000);
+    const bad = recent.some((x) => x.ms >= 4000) || recent.filter((x) => x.ms >= 1000).length >= 2;
+
+    if (bad) {
+      const down = lowerLevel();
+      if (down) {
+        // A step up that went straight back to stalling: stop trying for a while.
+        if (state.lastUpAt && now - state.lastUpAt < 120_000) state.upBlockedUntil = now + 20 * 60_000;
+        switchLevel(down, 'stalling');
+      }
+      return;
+    }
+
+    const quietFor = now - Math.max(started, ...stalls.map((x) => x.at));
+    const up = higherLevel();
+    if (!up || quietFor < 180_000 || now < (state.upBlockedUntil || 0)) return;
+    const speed = state.hls?.bandwidthEstimate ? state.hls.bandwidthEstimate / 1000 : state.deliveryKbps;
+    const need = up === 'original' ? (state.session.bitRate || 20000) : LEVEL_KBPS[up];
+    if ((speed && speed > need * 2) || (!speed && quietFor > 300_000)) {
+      state.lastUpAt = now;
+      switchLevel(up, 'connection good');
+    }
+  }, 2000);
 }
 
 // -------------------------------------------------------------- subtitles

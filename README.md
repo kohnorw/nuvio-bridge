@@ -265,6 +265,7 @@ The subtitle menu combines two sources:
 | `TRANSCODE_PRESET` | by core count | x264 preset, for re-encodes only. Unset picks from the core count. |
 | `TRANSCODE_MAX_HEIGHT` | `1080` | Encode height ceiling. The biggest lever on speed. 0 encodes at source height. |
 | `TRANSCODE_SEGMENT_SECS` | `2` | Segment length. Shorter starts faster and costs more requests. |
+| `TRANSCODE_MAX_KBPS` | `20000` | Bitrate ceiling for conversions at Original quality. Lower levels (1080p 8 Mbps, 720p 4, 480p 1.5, 360p 0.7) have their own. |
 | `SUBSYNC_WINDOWS` | `8` | Subtitle sync: how many stretches of the soundtrack are listened to. More is surer and reads more of the film. |
 | `SUBSYNC_WINDOW_SECS` | `45` | Subtitle sync: length of each stretch, in seconds. |
 | `SUBSYNC_MAX_OFFSET` | `90` | Subtitle sync: the largest timing correction it will look for, in seconds. |

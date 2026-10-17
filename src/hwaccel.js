@@ -37,12 +37,13 @@ const CANDIDATES = [
     encoder: 'h264_nvenc',
     // Decode on the GPU too, so frames never cross the bus.
     decode: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
-    encode: (quality) => [
+    encode: (quality, _preset, cap) => [
       '-c:v', 'h264_nvenc',
       '-preset', 'p4',
       '-tune', 'hq',
       '-rc', 'vbr',
       '-cq', String(quality),
+      ...(cap ? ['-maxrate', capped(cap).max, '-bufsize', capped(cap).buf] : []),
       '-profile:v', 'high',
       '-forced-idr', '1',
     ],
@@ -55,10 +56,12 @@ const CANDIDATES = [
     label: 'Intel Quick Sync',
     encoder: 'h264_qsv',
     decode: ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'],
-    encode: (quality) => [
+    encode: (quality, _preset, cap) => [
       '-c:v', 'h264_qsv',
       '-preset', 'veryfast',
-      '-global_quality', String(quality),
+      ...(cap
+        ? ['-b:v', capped(cap).avg, '-maxrate', capped(cap).max, '-bufsize', capped(cap).buf]
+        : ['-global_quality', String(quality)]),
       '-profile:v', 'high',
     ],
     scaleFilter: (w) => `scale_qsv=${w}:-1`,
@@ -72,9 +75,11 @@ const CANDIDATES = [
     // VAAPI needs the device named up front, and frames uploaded to it.
     decode: ['-hwaccel', 'vaapi', '-hwaccel_device', '/dev/dri/renderD128',
       '-hwaccel_output_format', 'vaapi'],
-    encode: (quality) => [
+    encode: (quality, _preset, cap) => [
       '-c:v', 'h264_vaapi',
-      '-qp', String(quality),
+      ...(cap
+        ? ['-rc_mode', 'VBR', '-b:v', capped(cap).avg, '-maxrate', capped(cap).max, '-bufsize', capped(cap).buf]
+        : ['-qp', String(quality)]),
       '-profile:v', 'high',
     ],
     scaleFilter: (w) => `scale_vaapi=${w}:-2`,
@@ -91,9 +96,10 @@ const CANDIDATES = [
     label: 'Apple VideoToolbox',
     encoder: 'h264_videotoolbox',
     decode: ['-hwaccel', 'videotoolbox'],
-    encode: () => [
+    encode: (_quality, _preset, cap) => [
       '-c:v', 'h264_videotoolbox',
-      '-b:v', process.env.TRANSCODE_BITRATE || '8M',
+      '-b:v', cap ? capped(cap).avg : (process.env.TRANSCODE_BITRATE || '8M'),
+      ...(cap ? ['-maxrate', capped(cap).max] : []),
       '-profile:v', 'high',
     ],
     probe: ['-f', 'lavfi', '-i', 'color=black:s=320x240:d=0.1',
@@ -104,12 +110,12 @@ const CANDIDATES = [
     label: 'AMD AMF',
     encoder: 'h264_amf',
     decode: [],
-    encode: (quality) => [
+    encode: (quality, _preset, cap) => [
       '-c:v', 'h264_amf',
       '-quality', 'speed',
-      '-rc', 'cqp',
-      '-qp_i', String(quality),
-      '-qp_p', String(quality),
+      ...(cap
+        ? ['-rc', 'vbr_peak', '-b:v', capped(cap).avg, '-maxrate', capped(cap).max, '-bufsize', capped(cap).buf]
+        : ['-rc', 'cqp', '-qp_i', String(quality), '-qp_p', String(quality)]),
     ],
     probe: ['-f', 'lavfi', '-i', 'color=black:s=320x240:d=0.1', '-c:v', 'h264_amf', '-f', 'null', '-'],
   },
@@ -118,9 +124,9 @@ const CANDIDATES = [
     label: 'V4L2 (Raspberry Pi and similar)',
     encoder: 'h264_v4l2m2m',
     decode: [],
-    encode: () => [
+    encode: (_quality, _preset, cap) => [
       '-c:v', 'h264_v4l2m2m',
-      '-b:v', process.env.TRANSCODE_BITRATE || '6M',
+      '-b:v', cap ? capped(cap).avg : (process.env.TRANSCODE_BITRATE || '6M'),
     ],
     requires: () => fs.existsSync('/dev/video11') || fs.existsSync('/dev/video10'),
     probe: ['-f', 'lavfi', '-i', 'color=black:s=320x240:d=0.1', '-c:v', 'h264_v4l2m2m', '-f', 'null', '-'],
@@ -128,15 +134,28 @@ const CANDIDATES = [
 ];
 
 // Always available, and the thing everything falls back to.
+// A bitrate ceiling, for when the picture has to fit a connection (a quality
+// level other than Original). `kbps` is the most the video may use; the
+// average is aimed a quarter under it, and the VBV buffer is two seconds, so
+// no stretch of the film bursts past what the connection carries — the
+// difference between a converted stream that plays smoothly on a phone and
+// one that stalls in every action scene.
+function capped(kbps) {
+  const k = Math.round(kbps);
+  return { avg: `${Math.round(k * 0.75)}k`, max: `${k}k`, buf: `${k * 2}k` };
+}
+
 export const SOFTWARE = {
   name: 'software',
   label: 'CPU (libx264)',
   encoder: 'libx264',
   decode: [],
-  encode: (quality, preset) => [
+  encode: (quality, preset, cap) => [
     '-c:v', 'libx264',
     '-preset', preset || 'veryfast',
     '-crf', String(quality),
+    // Capped CRF: quality-led, but never over the ceiling.
+    ...(cap ? ['-maxrate', capped(cap).max, '-bufsize', capped(cap).buf] : []),
     '-profile:v', 'high',
     '-level', '4.1',
     '-pix_fmt', 'yuv420p',

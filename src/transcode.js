@@ -74,6 +74,18 @@ const MAX_GOP_SECS = 30;
 const MAX_HEIGHT = Number(process.env.TRANSCODE_MAX_HEIGHT || 1080);
 const QUALITY = Number(process.env.TRANSCODE_CRF || 23);
 
+// Quality levels, as Plex has them: Original plays the file as it is where
+// the device allows (else converts at full size), and each step down is a
+// conversion with a hard bitrate ceiling sized for a slower connection. The
+// player picks one, or Auto moves between them as the connection changes.
+export const LEVELS = {
+  original: { height: MAX_HEIGHT, kbps: Number(process.env.TRANSCODE_MAX_KBPS || 20000), audioKbps: 192 },
+  1080: { height: 1080, kbps: 8000, audioKbps: 192 },
+  720: { height: 720, kbps: 4000, audioKbps: 160 },
+  480: { height: 480, kbps: 1500, audioKbps: 128 },
+  360: { height: 360, kbps: 700, audioKbps: 96 },
+};
+
 const HLS_ROOT = process.env.TRANSCODE_DIR
   || path.join(process.env.STATE_DIR || os.tmpdir(), 'hls');
 const SUB_ROOT = path.join(HLS_ROOT, '_subs');
@@ -246,6 +258,8 @@ async function probeNow(url) {
       duration: Math.floor(exact) || null,
       durationExact: exact || null,
       startTime: Number(data.format?.start_time) || 0,
+      // The whole file's bitrate, in kbps: what playing it as it is costs.
+      bitRate: Math.round(Number(data.format?.bit_rate) / 1000) || null,
       width: video?.width || null,
       height: video?.height || null,
       videoCodec: video?.codec_name || null,
@@ -348,10 +362,10 @@ const INPUT_FLAGS = [
 ];
 
 // Picture size after the height cap, keeping the aspect ratio and even sizes.
-function targetSize(plan) {
+function targetSize(plan, maxHeight = MAX_HEIGHT) {
   const srcH = plan.height || 1080;
   const srcW = plan.width || Math.round(srcH * 16 / 9);
-  const h = MAX_HEIGHT > 0 ? Math.min(srcH, MAX_HEIGHT) : srcH;
+  const h = maxHeight > 0 ? Math.min(srcH, maxHeight) : srcH;
   const w = Math.round((srcW * h) / srcH / 2) * 2;
   return { w, h: h - (h % 2) };
 }
@@ -361,7 +375,7 @@ function videoArgs(s) {
   const { plan, burn } = s;
   if (plan.videoCopy && burn == null) return [[], ['-map', '0:V:0', '-c:v', 'copy']];
 
-  const { w, h } = targetSize(plan);
+  const { w, h } = targetSize(plan, s.maxHeight);
   const hdr = plan.hdr;
   const accel = s.accel;
   const tm = hdr ? toneMapper(accel.name) : null;
@@ -370,7 +384,7 @@ function videoArgs(s) {
     '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0',
     '-force_key_frames', `expr:gte(t,n_forced*${SEG})`,
   ];
-  const encode = [...accel.encode(QUALITY, defaultPreset()), ...keyframes];
+  const encode = [...accel.encode(QUALITY, defaultPreset(), s.capKbps), ...keyframes];
   let input = [];
   let chain;
 
@@ -417,7 +431,7 @@ function audioArgs(s) {
   if (!track) return [];
   const map = ['-map', `0:a:${track.index}?`];
   if (track.codec === 'aac' && (track.channels || 2) <= 2) return [...map, '-c:a', 'copy'];
-  return [...map, '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+  return [...map, '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', `${s.audioKbps || 192}k`, '-ar', '48000', '-ac', '2',
     '-af', 'aresample=async=1:first_pts=0'];
 }
 
@@ -714,7 +728,7 @@ function thaw(s) {
  * @param {string} url
  * @param {{ audio?: number, seek?: number, burn?: number|null, plan?: object }} opts
  */
-export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false } = {}) {
+export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false, quality = 'original' } = {}) {
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   if (busy()) throw new Error('Too many conversions are already running.');
 
@@ -752,6 +766,16 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   if (aligned && exact && !bounds && details.videoCopy && burn == null) {
     details = { ...details, videoCopy: false };
   }
+  // A quality below Original: convert to fit it, unless the file already
+  // does — no taller than the level and no heavier than its bitrate — in
+  // which case copying it is both cheaper and better.
+  const level = LEVELS[quality] || LEVELS.original;
+  const lowered = quality !== 'original' && LEVELS[quality];
+  if (lowered && details.videoCopy) {
+    const fits = (details.height || 9999) <= level.height
+      && details.bitRate && details.bitRate <= level.kbps * 1.15;
+    if (!fits) { details = { ...details, videoCopy: false }; bounds = null; }
+  }
   // The player couldn't decode the remux: convert the picture instead.
   if (encode && details.videoCopy) {
     details = { ...details, videoCopy: false };
@@ -770,6 +794,13 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
     // fixed grid of SEG-second segments.
     bounds,
     done: new Set(),
+    quality: lowered ? quality : 'original',
+    maxHeight: level.height,
+    // Original keeps quality-led encoding with only a generous ceiling;
+    // lower levels are held to their bitrate.
+    capKbps: level.kbps,
+    audioKbps: level.audioKbps,
+    delivery: null,
     // No duration: a live channel (IPTV). Played as rolling live HLS — no
     // seeking, never paused or restarted somewhere else.
     live: !exact,
@@ -823,6 +854,13 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
         hdr: details.hdr,
         live: s.live,
         alignment: bounds ? 'keyframes' : 'grid',
+        quality: s.quality,
+        // Roughly what this stream costs to watch, in kbps, so the player
+        // can compare it with how fast segments are arriving.
+        streamKbps: copying ? (details.bitRate || null) : level.kbps,
+        bitRate: details.bitRate || null,
+        height: copying ? details.height : targetSize(details, level.height).h,
+        sourceHeight: details.height || null,
         encoder: copying ? 'copy' : s.accel.name,
         toneMapped: Boolean(details.hdr && !copying && toneMapperFor(s)),
       };
@@ -849,6 +887,21 @@ function keyframeIndex(url) {
 function toneMapperFor(s) {
   return s.accel.name === 'nvenc' || s.accel.name === 'vaapi'
     ? toneMapper(s.accel.name) : (toneMapper('software') === 'cpu' ? 'cpu' : null);
+}
+
+// How fast segments reach the player, measured on the way out: bytes over
+// the time from first byte written to the socket draining. Small segments sit
+// in socket buffers and say nothing, so only big ones count. Smoothed.
+export function recordDelivery(sid, bytes, ms) {
+  const s = sessions.get(sid);
+  if (!s || bytes < 384 * 1024 || ms < 40) return;
+  const kbps = (bytes * 8) / ms;
+  s.delivery = s.delivery ? s.delivery * 0.7 + kbps * 0.3 : kbps;
+}
+
+export function delivery(sid) {
+  const s = sessions.get(sid);
+  return s?.delivery ? Math.round(s.delivery) : null;
 }
 
 export function heartbeat(sid) {

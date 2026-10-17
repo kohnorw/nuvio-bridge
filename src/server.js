@@ -16,6 +16,7 @@ import * as progress from './progress.js';
 import * as vlcLauncher from './vlclauncher.js';
 import * as subsync from './subsync.js';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8080);
@@ -1569,7 +1570,10 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
     const wantsDirect = plan?.direct
       || (req.body?.forceDirect === true && plan?.directStreamsOnly);
 
-    if (wantsDirect && proxy.enabled && !req.body?.forceTranscode && burn === null
+    // A quality below Original means converting to fit a connection, which
+    // a restream of the file as it is can't do.
+    const quality = transcode.LEVELS[req.body?.quality] ? String(req.body.quality) : 'original';
+    if (wantsDirect && proxy.enabled && !req.body?.forceTranscode && burn === null && quality === 'original'
         && (!multiTrack || req.body?.forceDirect === true)) {
       return res.json({
         mode: 'direct',
@@ -1605,6 +1609,7 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       // Sent when the player has already failed to decode this file as a
       // remux: convert the video rather than copying it again.
       encode: req.body?.encodeVideo === true,
+      quality,
     });
     // The subtitle the player will turn on by itself: start reading it now,
     // from where playback starts, so it's there with the first frame.
@@ -1653,7 +1658,8 @@ app.get('/api/transcode/subtitle', requireUser, async (req, res) => {
 // running and a directory of segments behind.
 app.post('/api/transcode/heartbeat/:sid', (req, res) => {
   if (!transcode.heartbeat(req.params.sid)) return res.status(404).json({ error: 'That session is gone.' });
-  return res.json({ ok: true });
+  // How fast segments are reaching this player, for Auto quality.
+  return res.json({ ok: true, deliveryKbps: transcode.delivery(req.params.sid) });
 });
 
 // Scrubbing: the player says where the seek bar is heading, so conversion can
@@ -1696,6 +1702,10 @@ app.get('/hls/:sid/:file', (req, res) => {
     if (!found.path) return res.status(found.status || 404).type('text/plain').send(found.error || 'No such segment.');
     res.type('video/mp2t');
     res.setHeader('cache-control', 'private, max-age=60');
+    const began = Date.now();
+    let bytes = 0;
+    try { bytes = fs.statSync(found.path).size; } catch { /* gone */ }
+    res.on('finish', () => transcode.recordDelivery(sid, bytes, Date.now() - began));
     return res.sendFile(found.path);
   });
 });

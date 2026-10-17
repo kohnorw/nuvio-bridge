@@ -132,7 +132,7 @@ export function toggleFullscreen() {
 function closeMenus() {
   $('#watch-menu').hidden = true;
   $('#watch-queue-wrap').hidden = true;
-  for (const id of ['#watch-source-btn', '#watch-audio-btn', '#watch-subs-btn', '#watch-queue-btn']) {
+  for (const id of ['#watch-source-btn', '#watch-audio-btn', '#watch-subs-btn', '#watch-quality-btn', '#watch-queue-btn']) {
     $(id).setAttribute('aria-expanded', 'false');
   }
 }
@@ -144,6 +144,7 @@ const SECTIONS = [
   ['#watch-source-wrap', '#watch-source', 'Source', 'Looking for other sources…'],
   ['#watch-audio-wrap', '#watch-audio', 'Audio', 'This file has one audio track.'],
   ['#watch-subs-wrap', '#watch-subs', 'Subtitles', 'No subtitles found for this one.'],
+  ['#watch-quality-wrap', '#watch-quality', 'Quality', 'Quality can be changed once the video starts.'],
 ];
 
 // Each button opens its own section. The buttons are always there, so the
@@ -380,6 +381,7 @@ export function attach(el, navigation) {
   $('#watch-source-btn').addEventListener('click', (e) => openOptionsMenu(e.currentTarget, 'Source'));
   $('#watch-audio-btn').addEventListener('click', (e) => openOptionsMenu(e.currentTarget, 'Audio'));
   $('#watch-subs-btn').addEventListener('click', (e) => openOptionsMenu(e.currentTarget, 'Subtitles'));
+  $('#watch-quality-btn').addEventListener('click', (e) => openOptionsMenu(e.currentTarget, 'Quality'));
   $('#watch-queue-btn').addEventListener('click', toggleQueue);
   $('#watch-queue').addEventListener('click', () => closeMenus());
   watchAvailability();
