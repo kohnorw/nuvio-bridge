@@ -1018,3 +1018,99 @@ export async function subtitle(url, stream) {
     subJobs.delete(key);
   }
 }
+
+// ------------------------------------------------- subtitles, progressively
+//
+// Reading a whole Matroska file for one subtitle track took as long as the
+// download did, and the subtitles were blank until it finished. Instead the
+// track is read in two passes that run together: from where the viewer is to
+// the end, and from the start up to there. Cues are handed out as they are
+// found, so the ones on screen now arrive within seconds; the player asks
+// again until the job says it's complete. The finished track is cached like
+// before, and later requests get it whole at once.
+
+const liveSubs = new Map();
+const LIVE_SUB_TTL_MS = 30 * 60_000;
+
+function cueBlocks(text) {
+  return String(text || '').replace(/\r/g, '').split(/\n{2,}/)
+    .map((b) => b.trim()).filter((b) => b.includes('-->'));
+}
+
+function subPass(url, stream, out, { from = 0, until = null } = {}) {
+  const child = spawn('ffmpeg', [
+    ...INPUT_FLAGS, '-y',
+    ...(from > 0 ? ['-ss', String(from)] : []),
+    '-i', url,
+    ...(until != null ? ['-t', String(until)] : []),
+    '-map', `0:${stream}`, '-vn', '-an',
+    ...(from > 0 ? ['-output_ts_offset', String(from)] : []),
+    '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', out,
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  child.stderr.on('data', (chunk) => { err = (err + chunk).slice(-400); });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 15 * 60_000);
+  const done = once(child, 'close').then(([code]) => {
+    clearTimeout(timer);
+    if (code !== 0) throw new Error(`Subtitle extraction failed: ${err.trim().slice(-200)}`);
+  });
+  return { out, child, done };
+}
+
+function mergeCues(paths) {
+  const seen = new Set();
+  const cues = [];
+  for (const file of paths) {
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    for (const block of cueBlocks(text)) {
+      if (seen.has(block)) continue;
+      seen.add(block);
+      cues.push(block);
+    }
+  }
+  return `WEBVTT\n\n${cues.join('\n\n')}\n`;
+}
+
+/**
+ * A text subtitle track inside the file, as far as it has been read.
+ *
+ * @returns {Promise<{ text: string, complete: boolean }>}
+ */
+export async function subtitleSoFar(url, stream, from = 0) {
+  if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
+  const details = await inspect(url);
+  const track = details?.subtitleTracks.find((t) => t.stream === stream);
+  if (!track) throw new Error('No such subtitle track.');
+  if (track.render !== 'text') throw new Error('Only text subtitles load progressively.');
+
+  const key = crypto.createHash('sha1').update(`${url}#${stream}`).digest('hex');
+  const final = path.join(SUB_ROOT, `${key}.vtt`);
+  if (fs.existsSync(final)) return { text: fs.readFileSync(final, 'utf8'), complete: true };
+
+  let job = liveSubs.get(key);
+  if (!job) {
+    await fsp.mkdir(SUB_ROOT, { recursive: true });
+    const start = Math.max(0, Math.floor(Number(from) || 0) - 10);
+    const passes = [subPass(url, stream, path.join(SUB_ROOT, `${key}.a.part`), { from: start })];
+    // Overlap a little, so a cue straddling the join isn't lost.
+    if (start > 0) passes.push(subPass(url, stream, path.join(SUB_ROOT, `${key}.b.part`), { until: start + 15 }));
+    job = { passes, complete: false, error: null, at: Date.now() };
+    liveSubs.set(key, job);
+    Promise.all(passes.map((p) => p.done)).then(async () => {
+      // Earlier pass first, so cues stay in time order.
+      await fsp.writeFile(`${final}.part`, mergeCues(passes.map((p) => p.out).reverse()));
+      await fsp.rename(`${final}.part`, final);
+      job.complete = true;
+    }).catch((err) => { job.error = err; for (const p of passes) p.child.kill('SIGKILL'); })
+      .finally(() => {
+        setTimeout(() => {
+          liveSubs.delete(key);
+          for (const p of passes) fsp.rm(p.out, { force: true }).catch(() => {});
+        }, job.complete ? 5000 : LIVE_SUB_TTL_MS).unref();
+      });
+  }
+  if (job.complete && fs.existsSync(final)) return { text: fs.readFileSync(final, 'utf8'), complete: true };
+  if (job.error) { liveSubs.delete(key); throw job.error; }
+  return { text: mergeCues(job.passes.map((p) => p.out).reverse()), complete: false };
+}

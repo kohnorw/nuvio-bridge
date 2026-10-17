@@ -1,5 +1,5 @@
-import * as platform from './platform.js?v=86';
-import * as player from './player.js?v=86';
+import * as platform from './platform.js?v=87';
+import * as player from './player.js?v=87';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];

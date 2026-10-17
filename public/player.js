@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=86';
-import * as controls from './controls.js?v=86';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=87';
+import * as controls from './controls.js?v=87';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -913,6 +913,7 @@ export function setSubtitleDelay(seconds) {
     shiftCues(el.track, by);
     el.dataset.shifted = String(next);
   }
+  if (liveTrack && by) shiftCues(liveTrack, by);
   // PGS: the renderer has its own offset (positive draws earlier).
   if (pgsRenderer) pgsRenderer.timeOffset = -next;
   return next;
@@ -923,6 +924,7 @@ function syncSubtitles() {
   if (!video) return;
   video.querySelectorAll('track').forEach((t) => t.remove());
   disposePgs();
+  stopLiveSubs();
   if (state.subtitlesOff) return;
 
   const chosen = state.subtitle || (current()?.subtitle && { url: current().subtitle, label: 'Addon subtitles' });
@@ -930,6 +932,11 @@ function syncSubtitles() {
 
   if (chosen.pgs) {
     loadPgs(chosen);
+    return;
+  }
+  // A text track inside the file: shown cue by cue as the server reads it.
+  if (chosen.key?.startsWith('e')) {
+    loadLiveSubs(chosen);
     return;
   }
 
@@ -948,6 +955,78 @@ function syncSubtitles() {
   }, { once: true });
   track.addEventListener('error', () => setStatus('Those subtitles couldn’t be loaded.'), { once: true });
   track.track.mode = 'showing';
+}
+
+// Subtitles inside the file used to wait for the server to read the whole
+// film before a single line appeared. Now the server reads from where the
+// viewer is first and hands back what it has; cues go onto a text track the
+// page owns (addTextTrack — shown by Safari's fullscreen player too) as they
+// arrive, and the page asks again every couple of seconds until it's all
+// there.
+let liveTrack = null;
+let liveRun = 0;
+
+function stopLiveSubs() {
+  liveRun += 1;
+  if (!liveTrack) return;
+  for (const cue of Array.from(liveTrack.cues || [])) liveTrack.removeCue(cue);
+  liveTrack.mode = 'disabled';
+}
+
+function parseVtt(text) {
+  const stamp = (v) => {
+    const parts = v.trim().split(':').map(Number);
+    return parts.reduce((total, n) => total * 60 + n, 0);
+  };
+  const cues = [];
+  for (const block of String(text).replace(/\r/g, '').split(/\n{2,}/)) {
+    const lines = block.split('\n');
+    const at = lines.findIndex((l) => l.includes('-->'));
+    if (at < 0) continue;
+    const [a, rest] = lines[at].split('-->');
+    const b = rest.trim().split(/\s+/)[0];
+    const start = stamp(a);
+    const end = stamp(b);
+    const body = lines.slice(at + 1).join('\n');
+    if (Number.isFinite(start) && Number.isFinite(end) && body) cues.push({ key: `${start}|${end}|${body}`, start, end, body });
+  }
+  return cues;
+}
+
+async function loadLiveSubs(chosen) {
+  const { video } = state;
+  const run = liveRun;
+  if (!liveTrack) liveTrack = video.addTextTrack('subtitles', 'Subtitles');
+  liveTrack.mode = 'showing';
+  const seen = new Set();
+  let first = true;
+  for (;;) {
+    if (run !== liveRun) return;
+    const from = Math.floor(video.currentTime || 0);
+    let complete = false;
+    try {
+      const res = await fetch(`${chosen.url}&partial=1&from=${from}`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(await res.text());
+      complete = res.headers.get('x-subtitle-complete') === '1';
+      const text = await res.text();
+      if (run !== liveRun) return;
+      const delay = state.subDelay || 0;
+      for (const cue of parseVtt(text)) {
+        if (seen.has(cue.key)) continue;
+        seen.add(cue.key);
+        const start = Math.max(0, cue.start + delay);
+        liveTrack.addCue(new VTTCue(start, Math.max(start + 0.05, cue.end + delay), cue.body));
+      }
+      if (first && /Loading subtitles/.test($('#watch-status')?.textContent || '')) setStatus('');
+      first = false;
+    } catch (err) {
+      note(`subtitles: ${err?.message || err}`);
+      if (first) setStatus('Those subtitles couldn’t be loaded.');
+      return;
+    }
+    if (complete) return;
+    await new Promise((resolve) => { setTimeout(resolve, 2000); });
+  }
 }
 
 // Blu-ray (PGS) subtitles are pictures. Rather than burning them into the
@@ -1027,7 +1106,7 @@ function renderSubtitleMenu() {
     // Carried to the next episode: the language, or that they're off.
     if (state.subtitle?.lang) state.subLangChoice = state.subtitle.lang;
 
-    if (sub) setStatus('Loading subtitles from the file… the first time can take a little while.');
+    if (sub && sub.render === 'pgs') setStatus('Loading subtitles from the file… the first time can take a little while.');
     syncSubtitles();
   };
 }

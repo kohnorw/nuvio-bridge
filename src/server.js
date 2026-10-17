@@ -1550,6 +1550,10 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       burn,
       plan,
     });
+    // The subtitle the player will turn on by itself: start reading it now,
+    // from where playback starts, so it's there with the first frame.
+    const preferred = subtitleTracks?.find((t) => t.stream === preferredSubtitle && t.render === 'text');
+    if (preferred) transcode.subtitleSoFar(url, preferred.stream, Number(req.body?.seek) || 0).catch(() => {});
     return res.json({ mode: 'hls', ...session, subtitleTracks, preferredSubtitle });
   } catch (err) {
     return res.status(503).json({ error: err.message });
@@ -1573,6 +1577,14 @@ app.get('/api/transcode/subtitle', requireUser, async (req, res) => {
   const stream = Number(req.query.i);
   if (!Number.isInteger(stream)) return res.status(400).type('text/plain').send('Which track?');
   try {
+    // The player's progressive loader: whatever has been read so far, and
+    // whether that's all of it.
+    if (req.query.partial === '1') {
+      const { text, complete } = await transcode.subtitleSoFar(url, stream, Number(req.query.from) || 0);
+      res.setHeader('cache-control', 'no-store');
+      res.setHeader('x-subtitle-complete', complete ? '1' : '0');
+      return res.type('text/vtt; charset=utf-8').send(text);
+    }
     const file = await transcode.subtitle(url, stream);
     res.setHeader('cache-control', 'private, max-age=86400');
     return res.sendFile(file);
