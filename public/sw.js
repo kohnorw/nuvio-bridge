@@ -9,16 +9,16 @@
 // single-use as often as not — a cached one is a link that has already been
 // spent.
 
-const CACHE = 'nuvio-shell-v92';
+const CACHE = 'nuvio-shell-v93';
 
 const SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=92',
-  '/app.js?v=92',
-  '/platform.js?v=92',
-  '/player.js?v=92',
-  '/controls.js?v=92',
+  '/style.css?v=93',
+  '/app.js?v=93',
+  '/platform.js?v=93',
+  '/player.js?v=93',
+  '/controls.js?v=93',
   '/manifest.webmanifest',
   '/icons/icon.svg',
   '/icons/icon-192.png',
@@ -99,7 +99,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // A versioned file (/app.js?v=92) is that build's copy and never changes,
+  // A versioned file (/app.js?v=93) is that build's copy and never changes,
   // and index.html names every one by version, so all the modules always
   // come from one build. Those are served straight from the cache: no
   // network round trip at all on launch.
