@@ -1549,6 +1549,7 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       seek: Math.max(0, Math.floor(Number(req.body?.seek) || 0)),
       burn,
       plan,
+      aligned: req.body?.nativeHls === true,
     });
     // The subtitle the player will turn on by itself: start reading it now,
     // from where playback starts, so it's there with the first frame.
@@ -1580,7 +1581,7 @@ app.get('/api/transcode/subtitle', requireUser, async (req, res) => {
     // The player's progressive loader: whatever has been read so far, and
     // whether that's all of it.
     if (req.query.partial === '1') {
-      const { text, complete } = await transcode.subtitleSoFar(url, stream, Number(req.query.from) || 0);
+      const { text, complete } = await transcode.subtitleSoFar(url, stream, Number(req.query.from) || 0, { seeked: req.query.seeked === '1' });
       res.setHeader('cache-control', 'no-store');
       res.setHeader('x-subtitle-complete', complete ? '1' : '0');
       return res.type('text/vtt; charset=utf-8').send(text);

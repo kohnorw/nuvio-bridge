@@ -714,7 +714,7 @@ function thaw(s) {
  * @param {string} url
  * @param {{ audio?: number, seek?: number, burn?: number|null, plan?: object }} opts
  */
-export async function start(url, { audio = 0, seek = 0, burn = null, plan = null } = {}) {
+export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false } = {}) {
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   if (busy()) throw new Error('Too many conversions are already running.');
 
@@ -722,7 +722,7 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   // the probe rather than after it.
   const early = plan ? (/matroska/.test(String(plan.container)) ? keyframeIndex(url) : null)
     : (/\.mkv(\?|$)/i.test(url) ? keyframeIndex(url) : null);
-  const details = plan || await inspect(url);
+  let details = plan || await inspect(url);
   if (!details) throw new Error('The source could not be opened.');
   if (!details.hasVideo) throw new Error('There is no video in this file.');
   if (burn != null && !details.subtitleTracks.some((t) => t.stream === burn && t.image)) {
@@ -743,6 +743,14 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
       const gaps = b.map((t, i) => (b[i + 1] ?? exact) - t);
       if (b.length >= 2 && Math.max(...gaps) <= MAX_GOP_SECS) bounds = b;
     }
+  }
+  // Safari's own player (iPhone, iPad, Mac Safari) keeps time by the
+  // playlist. A remux on the fixed grid can't match it — its segments start
+  // wherever the source's keyframes are — so after a seek the picture and
+  // the subtitles part company. Without a keyframe index, those players get
+  // a conversion instead, which lands every segment exactly.
+  if (aligned && exact && !bounds && details.videoCopy && burn == null) {
+    details = { ...details, videoCopy: false };
   }
   const s = {
     sid,
@@ -1077,7 +1085,7 @@ function mergeCues(paths) {
  *
  * @returns {Promise<{ text: string, complete: boolean }>}
  */
-export async function subtitleSoFar(url, stream, from = 0) {
+export async function subtitleSoFar(url, stream, from = 0, { seeked = false } = {}) {
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   const details = await inspect(url);
   const track = details?.subtitleTracks.find((t) => t.stream === stream);
@@ -1092,16 +1100,17 @@ export async function subtitleSoFar(url, stream, from = 0) {
   if (!job) {
     await fsp.mkdir(SUB_ROOT, { recursive: true });
     const start = Math.max(0, Math.floor(Number(from) || 0) - 10);
-    const passes = [subPass(url, stream, path.join(SUB_ROOT, `${key}.a.part`), { from: start })];
+    const passes = [{ ...subPass(url, stream, path.join(SUB_ROOT, `${key}.a.part`), { from: start }), from: start }];
     // Overlap a little, so a cue straddling the join isn't lost.
-    if (start > 0) passes.push(subPass(url, stream, path.join(SUB_ROOT, `${key}.b.part`), { until: start + 15 }));
-    job = { passes, complete: false, error: null, at: Date.now() };
+    if (start > 0) passes.push({ ...subPass(url, stream, path.join(SUB_ROOT, `${key}.b.part`), { until: start + 15 }), from: 0 });
+    job = { key, url, stream, passes, extra: [], complete: false, error: null, at: Date.now() };
     liveSubs.set(key, job);
     Promise.all(passes.map((p) => p.done)).then(async () => {
       // Earlier pass first, so cues stay in time order.
-      await fsp.writeFile(`${final}.part`, mergeCues(passes.map((p) => p.out).reverse()));
+      await fsp.writeFile(`${final}.part`, sortCues(mergeCues(passes.map((p) => p.out).reverse())));
       await fsp.rename(`${final}.part`, final);
       job.complete = true;
+      for (const p of job.extra) { p.child.kill('SIGKILL'); fsp.rm(p.out, { force: true }).catch(() => {}); }
     }).catch((err) => { job.error = err; for (const p of passes) p.child.kill('SIGKILL'); })
       .finally(() => {
         setTimeout(() => {
@@ -1112,5 +1121,44 @@ export async function subtitleSoFar(url, stream, from = 0) {
   }
   if (job.complete && fs.existsSync(final)) return { text: fs.readFileSync(final, 'utf8'), complete: true };
   if (job.error) { liveSubs.delete(key); throw job.error; }
-  return { text: mergeCues(job.passes.map((p) => p.out).reverse()), complete: false };
+  if (seeked) seekPass(job, Math.max(0, Math.floor(Number(from) || 0) - 10));
+  const all = [...job.passes, ...job.extra].sort((a, b) => a.from - b.from).map((p) => p.out);
+  return { text: sortCues(mergeCues(all)), complete: false };
+}
+
+// The time a pass has read up to: the start of the last cue in its file.
+function readTo(p) {
+  let text = '';
+  try { text = fs.readFileSync(p.out, 'utf8'); } catch { return p.from; }
+  const last = cueBlocks(text).pop();
+  const match = last && /^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)/m.exec(last);
+  if (!match) return p.from;
+  return Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+// A seek to somewhere no pass has reached yet: read from there too, so the
+// lines for where the viewer now is arrive in seconds rather than once the
+// other passes get that far. At most three of these at a time.
+function seekPass(job, from) {
+  const covered = [...job.passes, ...job.extra].some((p) => from >= p.from && from <= readTo(p) + 30);
+  if (covered) return;
+  const n = (job.seq = (job.seq || 0) + 1);
+  const pass = { ...subPass(job.url, job.stream, path.join(SUB_ROOT, `${job.key}.s${n}.part`), { from }), from };
+  pass.done.catch(() => {});
+  job.extra.push(pass);
+  while (job.extra.length > 3) {
+    const old = job.extra.shift();
+    old.child.kill('SIGKILL');
+    fsp.rm(old.out, { force: true }).catch(() => {});
+  }
+}
+
+// Passes overlap and finish out of order; keep cues in time order.
+function sortCues(vtt) {
+  const time = (block) => {
+    const match = /^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)/m.exec(block.split('\n').find((l) => l.includes('-->')) || '');
+    return match ? Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) : 0;
+  };
+  const blocks = cueBlocks(vtt).sort((a, b) => time(a) - time(b));
+  return `WEBVTT\n\n${blocks.join('\n\n')}\n`;
 }

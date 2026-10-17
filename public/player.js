@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=90';
-import * as controls from './controls.js?v=90';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=91';
+import * as controls from './controls.js?v=91';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -391,6 +391,9 @@ async function play(next, opts = {}) {
       seek: resumeAt || 0,
       burn: burn ?? undefined,
       forceTranscode: opts.forceTranscode === true || undefined,
+      // Safari plays HLS itself and keeps time by the playlist; the server
+      // then makes sure every segment starts exactly where it says.
+      nativeHls: nativeHls(video) || undefined,
     });
   } catch (err) {
     if (isStale(gen)) return;
@@ -1111,12 +1114,21 @@ async function loadLiveSubs(chosen) {
   liveTrack.mode = 'showing';
   const seen = new Set();
   let first = true;
+  // A seek asks again at once, from the new position, rather than waiting
+  // out the two-second poll.
+  let seeked = false;
+  let wake = null;
+  const onSeek = () => { seeked = true; wake?.(); };
+  video.addEventListener('seeked', onSeek);
+  const stop = () => video.removeEventListener('seeked', onSeek);
   for (;;) {
-    if (run !== liveRun) return;
+    if (run !== liveRun) { stop(); return; }
     const from = Math.floor(video.currentTime || 0);
+    const flag = seeked ? '&seeked=1' : '';
+    seeked = false;
     let complete = false;
     try {
-      const res = await fetch(`${chosen.url}&partial=1&from=${from}`, { credentials: 'same-origin' });
+      const res = await fetch(`${chosen.url}&partial=1&from=${from}${flag}`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error(await res.text());
       complete = res.headers.get('x-subtitle-complete') === '1';
       const text = await res.text();
@@ -1133,10 +1145,12 @@ async function loadLiveSubs(chosen) {
     } catch (err) {
       note(`subtitles: ${err?.message || err}`);
       if (first) setStatus('Those subtitles couldn’t be loaded.');
+      stop();
       return;
     }
-    if (complete) return;
-    await new Promise((resolve) => { setTimeout(resolve, 2000); });
+    if (complete) { stop(); return; }
+    await new Promise((resolve) => { wake = resolve; setTimeout(resolve, 2000); });
+    wake = null;
   }
 }
 
