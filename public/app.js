@@ -1,5 +1,5 @@
-import * as platform from './platform.js?v=100';
-import * as player from './player.js?v=100';
+import * as platform from './platform.js?v=101';
+import * as player from './player.js?v=101';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -267,6 +267,7 @@ async function loadHome() {
 
     renderHero(data.hero);
     if (watching.length) rows.append(renderContinueRow(watching));
+    lastRowJson = JSON.stringify(watching.map((e) => [e.id, Math.round(e.position || 0), e.updatedAt]));
 
     // Collections sit above catalog rows, as they do in the app.
     for (const collection of data.collections || []) {
@@ -1350,16 +1351,40 @@ function autoPlay(type, id) {
 let inPagePlayer = false;
 
 // After watching, the row should reflect it straight away.
-async function refreshContinueRow() {
+let lastRowJson = '';
+async function refreshContinueRow({ wait = 600 } = {}) {
   const rows = $('#home-rows');
   if (!rows || !state.homeLoaded) return;
   // Give the player's last report a moment to land.
-  await new Promise((r) => { setTimeout(r, 600); });
+  if (wait) await new Promise((r) => { setTimeout(r, wait); });
   const watching = await api('/api/progress').catch(() => null);
   if (!watching) return;
+  // Nothing new: leave the row (and where it's scrolled to) alone.
+  const json = JSON.stringify(watching.map((e) => [e.id, Math.round(e.position || 0), e.updatedAt]));
+  if (json === lastRowJson && rows.querySelector('.row-continue')) return;
+  lastRowJson = json;
   rows.querySelector('.row-continue')?.remove();
   if (watching.length) rows.prepend(renderContinueRow(watching));
 }
+
+// Continue watching follows the other Nuvio apps as it happens. The row was
+// only fetched when Home first loaded, so something started on the Android
+// TV didn't appear until a full reload — and a home-screen app is rarely
+// reloaded, only brought back from the background. Now it's fetched again
+// the moment the app comes back into view, and every 30 seconds while Home
+// is on screen.
+const CONTINUE_POLL_MS = 30_000;
+function homeVisible() {
+  return document.visibilityState === 'visible' && !inPagePlayer
+    && !$('#shell')?.hidden && !$('#home-rows')?.closest('[hidden]');
+}
+document.addEventListener('visibilitychange', () => {
+  if (homeVisible()) refreshContinueRow({ wait: 0 });
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted && homeVisible()) refreshContinueRow({ wait: 0 });
+});
+setInterval(() => { if (homeVisible()) refreshContinueRow({ wait: 0 }); }, CONTINUE_POLL_MS);
 let skipNextPop = false;
 
 async function openInPage(type, id) {

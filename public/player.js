@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=100';
-import * as controls from './controls.js?v=100';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=101';
+import * as controls from './controls.js?v=101';
 
 const $ = (s, root = document) => root.querySelector(s);
 

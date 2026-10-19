@@ -1199,6 +1199,8 @@ async function continueWatching(user, index) {
 
 app.get('/api/progress', requireUser, async (req, res, next) => {
   try {
+    // Always the current answer from Nuvio, never a stored copy.
+    res.setHeader('cache-control', 'no-store');
     res.json(await continueWatching(req.user, await profileIndex(req.user)));
   } catch (err) { next(err); }
 });
