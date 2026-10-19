@@ -265,6 +265,8 @@ async function probeNow(url) {
       videoCodec: video?.codec_name || null,
       pixFmt: video?.pix_fmt || null,
       hdr: ['smpte2084', 'arib-std-b67'].includes(video?.color_transfer),
+      // Dolby Vision profile, when there is one (5 has no HDR10 base layer).
+      dvProfile: (video?.side_data_list || []).find((d) => d.dv_profile != null)?.dv_profile ?? null,
       audioChannels: audio?.channels || null,
       audioCodec: audio?.codec_name || null,
       fps,
@@ -373,7 +375,10 @@ function targetSize(plan, maxHeight = MAX_HEIGHT) {
 // Everything to do with the picture: [input args, output args].
 function videoArgs(s) {
   const { plan, burn } = s;
-  if (plan.videoCopy && burn == null) return [[], ['-map', '0:V:0', '-c:v', 'copy']];
+  if (plan.videoCopy && burn == null) {
+    // hvc1, not hev1: the tag Apple's decoders insist on.
+    return [[], ['-map', '0:V:0', '-c:v', 'copy', ...(plan.videoCodec === 'hevc' ? ['-tag:v', 'hvc1'] : [])]];
+  }
 
   const { w, h } = targetSize(plan, s.maxHeight);
   const hdr = plan.hdr;
@@ -388,14 +393,23 @@ function videoArgs(s) {
   let input = [];
   let chain;
 
-  if (accel.name === 'nvenc' && (burn == null || (filters.has('overlay_cuda') && filters.has('hwupload_cuda')))) {
+  // Burned-in subtitles. Pictures (PGS, VobSub, DVB) are overlaid from the
+  // file's own stream; text (SRT, ASS) is drawn by libass from a copy of the
+  // track read alongside (see textBurn). Either way the subtitle goes on
+  // after scaling, at the output size: overlaying a 4K frame and then
+  // shrinking it cost several times as much, and a 720x480 DVD subtitle was
+  // pasted unscaled into the top-left corner of an HD picture.
+  const image = burn != null && !s.burnText;
+  const text = burn != null && s.burnText ? textFilter(s) : null;
+
+  if (accel.name === 'nvenc' && !text && (!image || (filters.has('overlay_cuda') && filters.has('hwupload_cuda')))) {
     // Decode, scale, tone map and overlay all on the GPU.
     input = ['-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu',
       '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
     const main = tm === 'cuda'
       ? `[0:V:0]scale_cuda=w=${w}:h=${h}:format=p010,tonemap_cuda=format=yuv420p:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0`
       : `[0:V:0]scale_cuda=w=${w}:h=${h}:format=yuv420p`;
-    chain = burn == null
+    chain = !image
       ? `${main}[vout]`
       : `${main}[main];[0:${burn}]scale=${w}:${h},format=yuva420p,hwupload_cuda[sub];[main][sub]overlay_cuda=eof_action=pass:repeatlast=0[vout]`;
   } else if (accel.name === 'vaapi') {
@@ -403,24 +417,35 @@ function videoArgs(s) {
     const tone = tm === 'vaapi' ? ',tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709' : '';
     // Stay 10-bit until after tone mapping, or the HDR is thrown away first.
     const fmt = tone ? 'p010' : 'nv12';
-    if (burn == null) {
+    if (!image && !text) {
       input = ['-hwaccel', 'vaapi', '-hwaccel_device', dev, '-hwaccel_output_format', 'vaapi'];
       chain = `[0:V:0]scale_vaapi=w=${w}:h=${h}:format=${fmt}${tone}[vout]`;
     } else {
+      // GPU decode into ordinary frames, subtitles on the CPU at the output
+      // size, then back up for tone mapping and the encoder.
       input = ['-init_hw_device', `vaapi=va:${dev}`, '-hwaccel', 'vaapi', '-hwaccel_device', 'va', '-filter_hw_device', 'va'];
-      chain = `[0:V:0][0:${burn}]overlay=eof_action=pass:repeatlast=0,scale=${w}:${h}:flags=fast_bilinear,format=${fmt},hwupload${tone}[vout]`;
+      const base = `[0:V:0]scale=${w}:${h}:flags=fast_bilinear`;
+      chain = image
+        ? `${base}[base];[0:${burn}]scale=${w}:${h}[sub];[base][sub]overlay=eof_action=pass:repeatlast=0,format=${fmt},hwupload${tone}[vout]`
+        : `${base},${text},format=${fmt},hwupload${tone}[vout]`;
     }
   } else {
     // CPU decode and filters; the encoder may still be hardware (QSV,
-    // VideoToolbox, AMF, V4L2) — those take ordinary frames.
-    const pre = burn == null ? '[0:V:0]' : `[0:V:0][0:${burn}]overlay=eof_action=pass:repeatlast=0,`;
-    // Scale first so the (expensive) CPU tone mapping sees fewer pixels.
+    // VideoToolbox, AMF, V4L2, or NVENC when libass is drawing) — those
+    // take ordinary frames.
+    // Scale first so the (expensive) CPU tone mapping sees fewer pixels, and
+    // tone map before the subtitles so they keep their colours.
     const tone = hdr && toneMapper('software') === 'cpu'
       ? ',zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv'
       : '';
     const fmt = accel.name === 'qsv' ? 'nv12' : 'yuv420p';
     const upload = accel.uploadFilter ? `,${accel.uploadFilter}` : '';
-    chain = `${pre}scale=${w}:${h}:flags=fast_bilinear${tone},format=${fmt}${upload}[vout]`;
+    const base = `[0:V:0]scale=${w}:${h}:flags=fast_bilinear${tone}`;
+    if (image) {
+      chain = `${base},format=yuv420p[base];[0:${burn}]scale=${w}:${h}[sub];[base][sub]overlay=eof_action=pass:repeatlast=0,format=${fmt}${upload}[vout]`;
+    } else {
+      chain = `${base}${text ? `,${text}` : ''},format=${fmt}${upload}[vout]`;
+    }
   }
 
   return [input, ['-filter_complex', chain, '-map', '[vout]', ...encode, '-threads', '0']];
@@ -430,9 +455,187 @@ function audioArgs(s) {
   const track = s.plan.audioTracks[s.audio] || s.plan.audioTracks[0];
   if (!track) return [];
   const map = ['-map', `0:a:${track.index}?`];
-  if (track.codec === 'aac' && (track.channels || 2) <= 2) return [...map, '-c:a', 'copy'];
-  return [...map, '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', `${s.audioKbps || 192}k`, '-ar', '48000', '-ac', '2',
+  if (audioCopyable(s, track)) return [...map, '-c:a', 'copy'];
+  // Surround stays surround (as 5.1 AAC) on a device with the speakers for
+  // it; everything else is mixed down to stereo, as before.
+  const channels = s.maxChannels > 2 ? Math.min(track.channels || 2, 6) : 2;
+  const kbps = channels > 2 ? Math.max(s.audioKbps || 192, 384) : (s.audioKbps || 192);
+  return [...map, '-c:a', 'aac', '-profile:a', 'aac_low', '-b:a', `${kbps}k`, '-ar', '48000', '-ac', String(channels),
     '-af', 'aresample=async=1:first_pts=0'];
+}
+
+// Whether the selected audio track can go out as it is. AAC always could;
+// with a device profile, so can AC-3 / E-AC-3 (Apple devices, Edge,
+// TVs) and FLAC / Opus in fMP4, which saves a decode and keeps the
+// original mix.
+function audioCopyable(s, track) {
+  const codec = String(track.codec || '');
+  if ((track.channels || 2) > s.maxChannels) return false;
+  if (codec === 'aac') return true;
+  if (!s.audioCodecs.has(codec)) return false;
+  if (s.fmp4) return MP4_AUDIO.has(codec);
+  // MPEG-TS: only Safari's own player takes Dolby audio in it.
+  return s.nativeHls && (codec === 'ac3' || codec === 'eac3');
+}
+
+const MP4_AUDIO = new Set(['aac', 'ac3', 'eac3', 'flac', 'opus']);
+
+// ------------------------------------------------------ device profiles
+//
+// Plex's Direct Play / Direct Stream / Transcode decision depends on what the
+// device says it can decode. The player sends a profile (public/platform.js:
+// what MediaSource or Safari accept); this narrows a file's plan to that
+// device. Without one the plan stays as probed: H.264 + AAC, the browser
+// lowest common denominator.
+
+/** @returns {null | { video: Set<string>, audio: Set<string>, hdr: boolean, channels: number, native: boolean }} */
+export function deviceCaps(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const list = (v) => new Set((Array.isArray(v) ? v : []).slice(0, 24).map((x) => String(x).toLowerCase()));
+  return {
+    video: list(raw.video),
+    audio: list(raw.audio),
+    hdr: raw.hdr === true,
+    channels: Math.max(2, Math.min(8, Math.floor(Number(raw.channels) || 2))),
+    native: raw.native === true,
+  };
+}
+
+/**
+ * A file's plan as it applies to one device.
+ *
+ * @param {object} plan  from inspect()
+ * @param {string} url
+ * @param {ReturnType<typeof deviceCaps>} caps
+ */
+export function adapt(plan, url, caps) {
+  if (!plan || !caps) return plan;
+  const tenBit = /10|12/.test(String(plan.pixFmt || ''));
+  const codec = String(plan.videoCodec || '');
+  // HEVC copied as it is: 10-bit and HDR only where the device decodes and
+  // shows them, and never Dolby Vision profile 5, which has no HDR10 base
+  // and comes out green and purple anywhere but a Dolby Vision decoder.
+  const hevc = codec === 'hevc'
+    && caps.video.has(tenBit ? 'hevc10' : 'hevc')
+    && (!plan.hdr || caps.hdr)
+    && plan.dvProfile !== 5;
+  const videoOk = plan.browserVideo || hevc || (codec === 'av1' && caps.video.has('av1'));
+  const audio = plan.audioTracks?.[0];
+  const audioOk = plan.browserAudio || (audio && caps.audio.has(String(audio.codec))
+    && (audio.channels || 2) <= caps.channels);
+  return {
+    ...plan,
+    videoCopy: plan.videoCopy || hevc,
+    hevcCopy: hevc,
+    direct: plan.direct || (plan.hasVideo && videoOk && audioOk && universalContainer(plan.container, url)),
+    directStreamsOnly: plan.directStreamsOnly || (plan.hasVideo && videoOk && audioOk),
+  };
+}
+
+// ------------------------------------------- text subtitles, burned in
+//
+// libass draws text subtitles from a file, not from a stream in the input,
+// and reading a whole Matroska file for its subtitle track takes as long as
+// downloading it. So the track is read from where playback starts, forward,
+// at download speed (no decoding — far ahead of the encoder within seconds),
+// and the encoder starts once the next minute or so is in. As the reader gets
+// further, the encoder is restarted at its next segment with the longer
+// file; the player never notices, because segments are cut on the same grid
+// either way.
+
+const TEXT_LEAD_SECS = 45;
+const TEXT_WAIT_MS = 12000;
+
+function assPass(url, stream, out, from) {
+  const child = spawn('ffmpeg', [
+    ...INPUT_FLAGS, '-y',
+    ...(from > 0 ? ['-ss', String(from)] : []),
+    '-i', url,
+    '-map', `0:${stream}`, '-vn', '-an',
+    // Film time, like the segments.
+    ...(from > 0 ? ['-output_ts_offset', String(from)] : []),
+    '-c:s', 'ass', '-flush_packets', '1', '-f', 'ass', out,
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const job = { child, out, from, finished: false, failed: false };
+  child.stderr.on('data', () => {});
+  child.on('close', (code) => { job.finished = code === 0; job.failed = code !== 0; });
+  return job;
+}
+
+const ASS_TIME = /^Dialogue:\s*[^,]*,(\d+):(\d+):(\d+(?:\.\d+)?),/;
+
+// How far into the film the reader has got.
+function assReach(job) {
+  if (job.finished) return Infinity;
+  let text = '';
+  try { text = fs.readFileSync(job.out, 'utf8'); } catch { return job.from; }
+  let reach = job.from;
+  for (const line of text.slice(-4000).split('\n')) {
+    const m = ASS_TIME.exec(line);
+    if (m) reach = Math.max(reach, Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]));
+  }
+  return reach;
+}
+
+// Fonts the file carries for its ASS styling (common with anime releases).
+// Matroska keeps attachments in its header, so this reads very little.
+const fontJobs = new Map();
+function fontsFor(url) {
+  const key = crypto.createHash('sha1').update(url).digest('hex');
+  const dir = path.join(SUB_ROOT, `fonts-${key}`);
+  if (!fontJobs.has(key)) {
+    fontJobs.set(key, (async () => {
+      await fsp.mkdir(dir, { recursive: true });
+      const child = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'quiet', '-nostdin', '-y',
+        '-dump_attachment:t', '', '-user_agent', 'Mozilla/5.0', '-i', url, '-t', '0', '-f', 'null', '-'],
+      { cwd: dir, stdio: 'ignore' });
+      const timer = setTimeout(() => child.kill('SIGKILL'), 20000);
+      await once(child, 'close').catch(() => {});
+      clearTimeout(timer);
+      return dir;
+    })());
+  }
+  return fontJobs.get(key);
+}
+
+// Have the subtitles from `at` on the way and a snapshot of them for the
+// next ffmpeg run.
+async function textBurn(s, at) {
+  const t = s.text;
+  const reaches = (job) => job && !job.failed && job.from <= at + 1 && assReach(job) >= at;
+  if (!reaches(t.job) || (t.job.finished && assReach(t.job) < at)) {
+    try { t.job?.child.kill('SIGKILL'); } catch { /* gone */ }
+    t.n += 1;
+    t.job = assPass(s.url, s.burn, path.join(s.dir, `subs-read${t.n}.ass`), Math.max(0, Math.floor(at) - 15));
+  }
+  const deadline = Date.now() + TEXT_WAIT_MS;
+  while (!t.job.finished && !t.job.failed && assReach(t.job) < at + TEXT_LEAD_SECS && Date.now() < deadline) {
+    await new Promise((resolve) => { setTimeout(resolve, 150); });
+  }
+  if (t.fonts) await Promise.race([t.fonts, new Promise((resolve) => { setTimeout(resolve, 3000); })]);
+  let text = '';
+  try { text = fs.readFileSync(t.job.out, 'utf8'); } catch { /* nothing yet */ }
+  // Only whole lines: the reader may be mid-write.
+  text = text.slice(0, text.lastIndexOf('\n') + 1);
+  if (!/\[Events\]/.test(text)) text = '[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
+  t.v += 1;
+  const snap = path.join(s.dir, `subs${t.v}.ass`);
+  fs.writeFileSync(snap, text);
+  try { if (t.file && t.file !== snap) fs.rmSync(t.file, { force: true }); } catch { /* gone */ }
+  t.file = snap;
+  t.reach = assReach(t.job);
+  t.at = at;
+}
+
+function textFilter(s) {
+  const t = s.text;
+  if (!t?.file) return null;
+  const esc = (p) => p.replace(/\\/g, '/').replace(/'/g, "\\'").replace(/:/g, '\\:');
+  // ffmpeg's frames start at zero after the seek; the subtitles are on film
+  // time. Shift into film time for libass and back out again.
+  const style = t.styled ? '' : ":force_style='FontName=DejaVu Sans,FontSize=18,Outline=1.4,Shadow=0.5,MarginV=18'";
+  const fonts = t.fontsDir ? `:fontsdir='${esc(t.fontsDir)}'` : '';
+  return `setpts=PTS+${t.at.toFixed(3)}/TB,subtitles=filename='${esc(t.file)}'${fonts}${style},setpts=PTS-${t.at.toFixed(3)}/TB`;
 }
 
 function copying(s) {
@@ -505,14 +708,21 @@ function keyframeArgs(s, seg, at, vin, vout) {
     '-muxdelay', '0', '-muxpreload', '0',
     '-output_ts_offset', at.toFixed(3),
     '-f', 'segment',
-    '-segment_format', 'mpegts',
+    // fMP4 for HEVC (and FLAC/Opus/AC-3 kept as they are), which MPEG-TS
+    // can't carry to a browser. Every segment is a whole fragmented MP4 with
+    // the same init; segment() serves that init once and strips it from the
+    // segments. avoid_negative_ts=disabled keeps each fragment's decode time
+    // on the film's clock instead of restarting at zero.
+    '-segment_format', s.fmp4 ? 'mp4' : 'mpegts',
+    ...(s.fmp4 ? ['-segment_format_options',
+      'movflags=+frag_keyframe+empty_moov+default_base_moof+delay_moov+frag_discont:use_editlist=0:avoid_negative_ts=disabled'] : []),
     ...(cuts.length ? ['-segment_times', cuts.join(',')] : []),
     '-segment_time_delta', '0.02',
     '-segment_start_number', String(seg),
     '-segment_list', path.join(s.dir, 'ffmpeg.csv'),
     '-segment_list_type', 'csv',
     '-reset_timestamps', '0',
-    path.join(s.dir, 'seg%d.ts'),
+    path.join(s.dir, `seg%d${s.ext}`),
   ];
 }
 
@@ -540,13 +750,13 @@ function refreshDone(s) {
   if (!s.bounds) return;
   let list;
   try { list = fs.readFileSync(path.join(s.dir, 'ffmpeg.csv'), 'utf8'); } catch { return; }
-  for (const match of list.matchAll(/^seg(\d+)\.ts,/gm)) s.done.add(Number(match[1]));
+  for (const match of list.matchAll(/^seg(\d+)\.(?:ts|mp4),/gm)) s.done.add(Number(match[1]));
 }
 
 // Segment n is on disk and complete.
 function segReady(s, n) {
   if (s.bounds && !s.done.has(n)) return false;
-  return fs.existsSync(path.join(s.dir, `seg${n}.ts`));
+  return fs.existsSync(path.join(s.dir, `seg${n}${s.ext}`));
 }
 
 const NOISE = /non-monotonous|non monotonic|Packet corrupt|PES packet|Last message repeated|no frame!|non-existing (SPS|PPS)|Could not find ref|\[h264 @|\[hevc @|\[aac @|\[ac3 @/i;
@@ -555,7 +765,7 @@ const DEVICE_FAILURE = /Device creation failed|Cannot load|No device available|F
 // -------------------------------------------------------------- sessions
 
 function segmentFiles(dir) {
-  try { return fs.readdirSync(dir).filter((f) => /^seg\d+\.ts$/.test(f)); } catch { return []; }
+  try { return fs.readdirSync(dir).filter((f) => /^seg\d+\.(?:ts|mp4)$/.test(f)); } catch { return []; }
 }
 
 // The last segment in the unbroken run from where this ffmpeg started. Files
@@ -565,7 +775,7 @@ function highestSeg(s) {
   // follow: the newest file is the answer.
   if (s.live) {
     let max = s.startSeg - 1;
-    for (const f of segmentFiles(s.dir)) max = Math.max(max, Number(f.slice(3, -3)));
+    for (const f of segmentFiles(s.dir)) max = Math.max(max, parseInt(f.slice(3), 10));
     return max;
   }
   refreshDone(s);
@@ -607,6 +817,14 @@ async function keyframeAtOrBefore(url, t) {
 // Start (or restart) ffmpeg so that segment `seg` is produced next. For a
 // remux this first moves the start back to the real keyframe.
 async function launchAt(s, seg) {
+  if (s.burnText) {
+    const token = (s.launchToken = (s.launchToken || 0) + 1);
+    s.relaunching = true;
+    try { await textBurn(s, segStart(s, seg)); } finally { s.relaunching = false; }
+    if (s.dead || token !== s.launchToken) return;
+    launch(s, seg);
+    return;
+  }
   if (!copying(s) || seg === 0 || s.live || s.bounds) { launch(s, seg); return; }
   const token = (s.launchToken = (s.launchToken || 0) + 1);
   const start = s.plan.startTime || 0;
@@ -702,9 +920,19 @@ function tick() {
       }
     }
 
+    // Text burned in: restart at the next segment with more of the track
+    // before the encoder runs past what its copy covers.
+    if (s.burnText && s.text?.file && !s.relaunching && running(s) && s.text.reach !== Infinity && !s.finished) {
+      const next = top + 1;
+      const made = segStart(s, Math.max(next, s.startSeg));
+      if (made >= s.text.reach - 2 * SEG - 6 && assReach(s.text.job) > s.text.reach + SEG && (!s.nseg || next < s.nseg)) {
+        launchAt(s, next);
+      }
+    }
+
     const keepFrom = segStart(s, s.lastReq) - KEEP_BEHIND_SEGS * SEG;
     for (const f of segmentFiles(s.dir)) {
-      const n = Number(f.slice(3, -3));
+      const n = parseInt(f.slice(3), 10);
       if (segStart(s, n) < keepFrom) {
         fs.rmSync(path.join(s.dir, f), { force: true });
         s.done?.delete(n);
@@ -728,7 +956,7 @@ function thaw(s) {
  * @param {string} url
  * @param {{ audio?: number, seek?: number, burn?: number|null, plan?: object }} opts
  */
-export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false, quality = 'original', live = false } = {}) {
+export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false, quality = 'original', live = false, caps = null } = {}) {
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   if (busy()) throw new Error('Too many conversions are already running.');
 
@@ -739,9 +967,11 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   let details = plan || await inspect(url);
   if (!details) throw new Error('The source could not be opened.');
   if (!details.hasVideo) throw new Error('There is no video in this file.');
-  if (burn != null && !details.subtitleTracks.some((t) => t.stream === burn && t.image)) {
-    throw new Error('Only image subtitles are burned in.');
-  }
+  const device = deviceCaps(caps);
+  details = adapt(details, url, device);
+  const burnTrack = burn == null ? null : details.subtitleTracks.find((t) => t.stream === burn);
+  if (burn != null && !burnTrack) throw new Error('No such subtitle track to burn in.');
+  if (burnTrack && !burnTrack.image && live) throw new Error('Text subtitles can’t be burned into live TV.');
 
   const sid = crypto.randomBytes(12).toString('hex');
   const dir = path.join(HLS_ROOT, sid);
@@ -779,15 +1009,42 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   }
   // The player couldn't decode the remux: convert the picture instead.
   if (encode && details.videoCopy) {
-    details = { ...details, videoCopy: false };
+    details = { ...details, videoCopy: false, hevcCopy: false };
     bounds = null;
   }
+  // Copied HEVC goes out as fMP4, which is only built on the keyframe cuts:
+  // without them, convert to H.264 as before.
+  if (details.hevcCopy && details.videoCopy && !bounds) details = { ...details, videoCopy: false, hevcCopy: false };
+  if (!details.videoCopy && !/^h264$/.test(String(details.videoCodec))) details = { ...details, hevcCopy: false };
+  const audioIndex = Math.max(0, Math.min(Number(audio) || 0, Math.max(0, details.audioTracks.length - 1)));
+  const chosenAudio = details.audioTracks[audioIndex];
+  const audioCodecs = device ? device.audio : new Set();
+  // fMP4 when it carries something MPEG-TS can't: copied HEVC, or a copied
+  // FLAC / Opus / Dolby track on a device that decodes it.
+  const fmp4 = Boolean(bounds) && details.videoCopy && burn == null
+    && (details.videoCodec === 'hevc'
+      || (chosenAudio && ['flac', 'opus', 'ac3', 'eac3'].includes(chosenAudio.codec)
+        && audioCodecs.has(chosenAudio.codec) && (chosenAudio.channels || 2) <= (device?.channels || 2)));
   const s = {
     sid,
     dir,
     url,
-    audio: Math.max(0, Math.min(Number(audio) || 0, Math.max(0, details.audioTracks.length - 1))),
+    audio: audioIndex,
     burn,
+    burnText: Boolean(burnTrack && !burnTrack.image),
+    text: burnTrack && !burnTrack.image ? {
+      n: 0, v: 0, job: null, file: null, reach: 0, at: 0,
+      styled: /^(ass|ssa)$/.test(String(burnTrack.codec)),
+      fonts: /^(ass|ssa)$/.test(String(burnTrack.codec)) && /matroska/.test(String(details.container))
+        ? fontsFor(url).then((dir) => { s.text.fontsDir = dir; }).catch(() => {}) : null,
+      fontsDir: null,
+    } : null,
+    fmp4,
+    ext: fmp4 ? '.mp4' : '.ts',
+    init: null,
+    audioCodecs,
+    maxChannels: device?.channels || 2,
+    nativeHls: Boolean(device?.native || aligned),
     plan: details,
     accel: hw.active(),
     nseg: bounds ? bounds.length : (exact ? Math.ceil(exact / SEG) : 0),
@@ -863,6 +1120,10 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
         height: copying ? details.height : targetSize(details, level.height).h,
         sourceHeight: details.height || null,
         encoder: copying ? 'copy' : s.accel.name,
+        // How this device is being served, for the player's diagnostics.
+        segments: s.fmp4 ? 'fmp4' : 'ts',
+        audioCopied: Boolean(chosenAudio && audioCopyable(s, chosenAudio)),
+        burnText: s.burnText,
         toneMapped: Boolean(details.hdr && !copying && toneMapperFor(s)),
       };
     }
@@ -871,6 +1132,13 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
 
   stop(sid);
   throw new Error('ffmpeg produced nothing in time. The source may be unreachable or too slow.');
+}
+
+/** Probe a file (and index a Matroska one's keyframes) ahead of playing it. */
+export function warm(url) {
+  inspect(url).then((plan) => {
+    if (plan && /matroska/.test(String(plan.container))) keyframeIndex(url);
+  }).catch(() => {});
 }
 
 const keyframeCache = new Map();
@@ -923,6 +1191,7 @@ export function stop(sid) {
   s.dead = true;
   clearTimeout(s.timers.idle);
   kill(s);
+  try { s.text?.job?.child.kill('SIGKILL'); } catch { /* gone */ }
   sessions.delete(sid);
   fsp.rm(s.dir, { recursive: true, force: true }).catch(() => {});
 }
@@ -954,14 +1223,16 @@ export function readPlaylist(sid) {
   }
   const target = s.bounds ? Math.ceil(Math.max(...lengths)) : SEG + 1;
   const lines = [
-    '#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${target}`,
+    '#EXTM3U', `#EXT-X-VERSION:${s.fmp4 ? 7 : 3}`, `#EXT-X-TARGETDURATION:${target}`,
     '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD',
   ];
+  if (s.fmp4) lines.push(`#EXT-X-MAP:URI="/hls/${sid}/init.mp4"`);
   // Only true when every segment starts on a keyframe: always for a
   // conversion and a keyframe-cut remux, never for a remux on the grid.
   if (!copying(s) || s.bounds) lines.push('#EXT-X-INDEPENDENT-SEGMENTS');
   if (s.startAt > 0) lines.push(`#EXT-X-START:TIME-OFFSET=${s.startAt.toFixed(3)},PRECISE=YES`);
-  lengths.forEach((len, i) => lines.push(`#EXTINF:${len.toFixed(3)},`, `/hls/${sid}/seg${i}.ts`));
+  const ext = s.fmp4 ? 'm4s' : 'ts';
+  lengths.forEach((len, i) => lines.push(`#EXTINF:${len.toFixed(3)},`, `/hls/${sid}/seg${i}.${ext}`));
   lines.push('#EXT-X-ENDLIST');
   return `${lines.join('\n')}\n`;
 }
@@ -976,9 +1247,63 @@ export function readPlaylist(sid) {
 export async function segment(sid, file) {
   const s = sessions.get(sid);
   if (!s) return { status: 404, error: 'That conversion has ended.' };
-  const match = /^seg(\d+)\.ts$/.exec(file);
-  if (!match) return { status: 404, error: 'No such segment.' };
+  if (s.fmp4 && file === 'init.mp4') return initSegment(s);
+  const match = /^seg(\d+)\.(ts|m4s)$/.exec(file);
+  if (!match || (match[2] === 'm4s') !== s.fmp4) return { status: 404, error: 'No such segment.' };
   const n = Number(match[1]);
+  const found = await segmentFile(s, sid, n);
+  if (!s.fmp4 || !found.path) return found;
+  // A whole fMP4 file on disk; the player wants only its fragments.
+  try {
+    const data = fs.readFileSync(found.path);
+    const at = boxOffset(data, 'moof');
+    if (at < 0) return { status: 502, error: 'That segment is damaged.' };
+    if (!s.init) s.init = Buffer.from(data.subarray(0, at));
+    // The muxer closes each file with an index (mfra) a stream has no use
+    // for; only the fragments go out.
+    const end = boxOffset(data, 'mfra');
+    return { data: data.subarray(at, end > at ? end : data.length), type: 'video/iso.segment' };
+  } catch {
+    return { status: 410, error: 'That segment is gone.' };
+  }
+}
+
+// Top-level MP4 box `type`: its byte offset, or -1.
+function boxOffset(data, type) {
+  let i = 0;
+  while (i + 8 <= data.length) {
+    let size = data.readUInt32BE(i);
+    if (data.toString('latin1', i + 4, i + 8) === type) return i;
+    if (size === 1 && i + 16 <= data.length) size = Number(data.readBigUInt64BE(i + 8));
+    if (size < 8) return -1;
+    i += size;
+  }
+  return -1;
+}
+
+// The init (ftyp + moov) shared by every segment. Whichever segment exists
+// first will do: every run writes the same one.
+async function initSegment(s) {
+  if (s.init) return { data: s.init, type: 'video/mp4' };
+  const deadline = Date.now() + SEGMENT_WAIT_MS;
+  while (Date.now() < deadline && !s.dead) {
+    refreshDone(s);
+    for (const f of segmentFiles(s.dir)) {
+      const n = parseInt(f.slice(3), 10);
+      if (!segReady(s, n)) continue;
+      try {
+        const data = fs.readFileSync(path.join(s.dir, f));
+        const at = boxOffset(data, 'moof');
+        if (at > 0) { s.init = Buffer.from(data.subarray(0, at)); return { data: s.init, type: 'video/mp4' }; }
+      } catch { /* deleted meanwhile */ }
+    }
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+  }
+  return { status: 504, error: 'The conversion is not keeping up.' };
+}
+
+async function segmentFile(s, sid, n) {
+  const file = `seg${n}${s.ext}`;
   if (s.nseg && n >= s.nseg) return { status: 404, error: 'Past the end of the film.' };
 
   heartbeat(sid);

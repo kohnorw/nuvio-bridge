@@ -9,6 +9,9 @@
 #   FFMPEG=jellyfin   Jellyfin's ffmpeg (default; amd64 and arm64)
 #   FFMPEG=debian     Debian's ffmpeg: smaller, no GPU tone mapping
 #   FFMPEG=none       no ffmpeg at all; streams the browser can't play go to VLC
+#
+# DejaVu is the font burned-in text subtitles are drawn in (ASS files bring
+# their own from the MKV's attachments).
 FROM node:20-bookworm-slim
 
 ARG FFMPEG=jellyfin
@@ -22,13 +25,13 @@ RUN set -eux; \
       echo "deb [signed-by=/etc/apt/keyrings/jellyfin.gpg] https://repo.jellyfin.org/debian bookworm main" \
         > /etc/apt/sources.list.d/jellyfin.list; \
       apt-get update; \
-      apt-get install -y --no-install-recommends "$JELLYFIN_FFMPEG" mesa-va-drivers; \
+      apt-get install -y --no-install-recommends "$JELLYFIN_FFMPEG" mesa-va-drivers fonts-dejavu-core fontconfig; \
       ln -s /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg; \
       ln -s /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe; \
       apt-get purge -y gnupg curl; apt-get autoremove -y; \
     elif [ "$FFMPEG" = "debian" ]; then \
       apt-get update; \
-      apt-get install -y --no-install-recommends ffmpeg mesa-va-drivers; \
+      apt-get install -y --no-install-recommends ffmpeg mesa-va-drivers fonts-dejavu-core fontconfig; \
     fi; \
     rm -rf /var/lib/apt/lists/*
 

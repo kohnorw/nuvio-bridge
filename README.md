@@ -596,12 +596,41 @@ up in the native app like any other library entry.
 
 ---
 
+### Per-device playback (like Plex's Direct Play / Direct Stream)
+
+Every play request carries what the device decodes — HEVC (8- and 10-bit),
+AV1, HDR, AC-3 / E-AC-3, FLAC, Opus and its speaker count — read from
+MediaSource (hls.js) or Safari's own player. The server reads the file against
+that and does the least work that device needs:
+
+| File                     | iPhone / iPad / Mac / Apple TV | Chrome / Edge with HEVC | Firefox, older devices |
+|--------------------------|--------------------------------|-------------------------|------------------------|
+| HEVC (incl. 10-bit HDR)  | copied (fMP4)                  | copied (fMP4)           | converted to H.264     |
+| AC-3 / E-AC-3 5.1        | copied                         | 5.1 AAC or stereo       | stereo AAC             |
+| H.264 + AAC              | copied                         | copied                  | copied                 |
+
+Copied HEVC goes out as fragmented-MP4 HLS cut on the file's own keyframes, so
+it starts in well under a second and costs the server almost nothing. Dolby
+Vision profile 5 is still converted (it has no HDR10 layer).
+
+### Burned-in subtitles
+
+The subtitle menu lists every track a second time under **Burned in**. Picking
+one restarts the stream at the same moment with the subtitles drawn into the
+picture — they then show everywhere, including Safari's fullscreen player, TVs,
+and DVD / DVB bitmap tracks no browser can draw. Pictures (PGS, VobSub, DVB)
+are overlaid at the output size; text (SRT, ASS) is drawn by libass from the
+track, read ahead of the encoder at download speed, so the first frame needs
+only the next minute of it.
+
 ## Limitations
 
-- **Converted audio is stereo.** Surround tracks are downmixed to AAC stereo
-  for the browser; VLC plays them as they are.
-- **ASS subtitle styling** is reduced to plain text in the browser. VLC renders
-  it fully.
+- **Surround** is kept only where the device has the speakers for it (the
+  browser reports its channel count): there it goes out as it is (AC-3 / E-AC-3
+  on Apple devices) or as 5.1 AAC. Elsewhere it is mixed down to stereo.
+- **ASS subtitle styling** is reduced to plain text when the browser draws the
+  subtitles. Choose the track under *Burned in* in the subtitle menu for the
+  full styling (with the file's own fonts); VLC renders it fully too.
 - **Dolby Vision profile 5** (no HDR10 base layer, common in streaming rips)
   converts with wrong colours. Profiles 7 and 8 use their HDR10 layer and are
   fine.
