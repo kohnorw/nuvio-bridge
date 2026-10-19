@@ -498,6 +498,12 @@ app.post('/api/library', requireUser, async (req, res, next) => {
       await nuvio.removeFromLibrary(token, index, item);
       return res.json({ inLibrary: false });
     }
+    // Without the owning addon, the Nuvio apps can't open a title whose id
+    // isn't an IMDb one (IPTV channels above all) — it sits in the library
+    // and won't play.
+    if (!item.addonBaseUrl && !/^tt\d+$/.test(String(item.id))) {
+      item.addonBaseUrl = addonsApi.ownerOf(await installedAddons(req.user, { wait: true }), item.type, item.id);
+    }
     await nuvio.addToLibrary(token, index, item);
     res.json({ inLibrary: true });
   } catch (err) { next(err); }

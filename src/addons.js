@@ -206,6 +206,23 @@ function supports(addon, resourceName, type, id) {
     && (!id || !r.idPrefixes.length || r.idPrefixes.some((p) => id.startsWith(p))));
 }
 
+// The addon a title belongs to, as the base URL the Nuvio apps record in a
+// library entry (addon_base_url). Titles with an IMDb id are found by any
+// metadata addon; anything else — an IPTV channel, a Kitsu anime, an addon's
+// own ids — can only be opened through the addon that issued the id, and an
+// entry without it is one the Android TV and mobile apps can't play.
+// Preference: the addon claiming the id's prefix for metadata, then for
+// streams, then any metadata addon for that type.
+export function ownerOf(addons, type, id) {
+  const claims = (addon, resource) => addon.manifest.resources.some((r) => r.name === resource
+    && (!r.types.length || r.types.includes(type))
+    && r.idPrefixes.length && r.idPrefixes.some((p) => String(id).startsWith(p)));
+  const owner = addons.find((a) => claims(a, 'meta'))
+    || addons.find((a) => claims(a, 'stream'))
+    || addons.find((a) => supports(a, 'meta', type));
+  return owner ? baseOf(owner.transportUrl) : null;
+}
+
 async function fanOut(addons, predicate, build) {
   const eligible = addons.filter(predicate);
   const settled = await Promise.allSettled(

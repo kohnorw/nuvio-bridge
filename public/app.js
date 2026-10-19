@@ -1,5 +1,5 @@
-import * as platform from './platform.js?v=99';
-import * as player from './player.js?v=99';
+import * as platform from './platform.js?v=100';
+import * as player from './player.js?v=100';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -925,11 +925,17 @@ let libraryItem = null;
 
 async function setupLibraryButton(item, type) {
   const button = $('#library-toggle');
-  const baseId = (item.parentId || item.id).split(':')[0];
+  // Series are saved as the show, not the episode you happened to open: the
+  // episode's ":season:episode" comes off the end. Nothing else is cut —
+  // splitting at the first colon turned every IPTV channel ("iptv:123",
+  // "xtream:live:456") into the same useless "iptv", which the Nuvio apps
+  // couldn't play.
+  const raw = String(item.parentId || item.id);
+  const baseId = type === 'series' ? raw.replace(/:\d+:\d+$/, '') : raw;
 
-  // Series are saved as the show, not the episode you happened to open.
   libraryItem = { id: baseId, type, name: item.name, poster: item.poster,
                   background: item.background, year: item.year,
+                  posterShape: item.posterShape,
                   imdbRating: item.imdbRating, genres: item.genres || [] };
 
   button.hidden = false;
