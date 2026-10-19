@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=104';
-import * as controls from './controls.js?v=104';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=105';
+import * as controls from './controls.js?v=105';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -905,17 +905,9 @@ function embeddedKnown() {
 }
 
 function chooseDefaultSubtitle() {
-  if (state.subtitlesOff || state.subtitleTouched || state.subtitle) return;
-  if (state.embeddedKnown === false) return;
-  // The server's pick of the file's own tracks (bestSubtitle in server.js):
-  // the person's language, full rather than forced, text before pictures.
-  // It sends none when subtitles are off in Settings.
-  const track = (state.embeddedSubs || []).find((t) => t.stream === state.embeddedDefault && t.url);
-  if (track) {
-    state.subtitle = { key: `e${track.stream}`, url: track.url, label: track.label, lang: track.lang, pgs: track.render === 'pgs' };
-  }
+  // Only burned-in subtitles are offered, so the player never turns a track
+  // on by itself; the menu just reflects the current choice.
   renderSubtitleMenu();
-  syncSubtitles();
 }
 
 // The next episode, when the queue has run out (or there was never more than
@@ -1551,19 +1543,15 @@ function renderSubtitleMenu() {
   // Only the file's own tracks: made for this release, so always in sync.
   const embedded = (state.embeddedSubs || []).filter((t) => t.url);
 
+  // Subtitles are only ever burned into the picture: one way that looks the
+  // same everywhere (Safari's fullscreen player, TVs, DVD / DVB bitmaps),
+  // rather than a mix of player-drawn tracks. A restreamed file is switched
+  // to a conversion when one is picked; a live channel can burn pictures
+  // but not text.
   select.replaceChildren(option('', 'Off'));
-  embedded.forEach((sub) => select.append(option(`e${sub.stream}`, sub.label)));
-  // Every track can also be burned into the picture — including DVD and DVB
-  // bitmaps, which nothing in a browser can draw. Only where the server
-  // converts (not for a restreamed file or a live channel's text).
-  const burnable = state.session && state.session.mode === 'hls' ? (state.embeddedSubs || []) : [];
-  if (burnable.length) {
-    const group = document.createElement('optgroup');
-    group.label = 'Burned in (works everywhere)';
-    burnable.filter((sub) => sub.image || !state.session?.live)
-      .forEach((sub) => group.append(option(`b${sub.stream}`, sub.label.replace(/ \(in file\)$/, ''))));
-    if (group.children.length) select.append(group);
-  }
+  const burnable = state.session && ['hls', 'direct'].includes(state.session.mode) ? (state.embeddedSubs || []) : [];
+  burnable.filter((sub) => sub.image || !state.session?.live)
+    .forEach((sub) => select.append(option(`b${sub.stream}`, sub.label.replace(/ \(in file\)$/, ''))));
   wrap.hidden = select.options.length < 2;
 
   if (Number.isInteger(state.burnPick)) select.value = `b${state.burnPick}`;
