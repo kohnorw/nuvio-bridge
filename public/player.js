@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=103';
-import * as controls from './controls.js?v=103';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=104';
+import * as controls from './controls.js?v=104';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -386,9 +386,13 @@ async function play(next, opts = {}) {
   // Where to start: an explicit position, else this tab's own memory, else
   // where this profile left off on any device (Continue watching).
   const resumeAt = opts.resumeAt ?? (storage.get(state.index) || item?.resume || 0);
-  // Subtitles are never burned in any more (it cost a full re-encode); PGS
-  // is drawn by the player instead. Kept only so old callers are harmless.
-  const burn = null;
+  // Subtitles are drawn by the player (text, and PGS through libpgs) unless
+  // the viewer picks "burned in" from the menu: a conversion, but one that
+  // shows in Safari's fullscreen player, on a TV and for formats nothing in
+  // the browser can draw (DVD, DVB). A new item starts without it.
+  if (newItem) state.burnPick = null;
+  if (opts.burn !== undefined) state.burnPick = opts.burn;
+  const burn = Number.isInteger(state.burnPick) ? state.burnPick : null;
   state.embeddedSubs = [];
   renderSubtitleMenu();
 
@@ -423,6 +427,9 @@ async function play(next, opts = {}) {
       // A channel is live whatever its stream claims: some IPTV streams
       // report a duration, and were played (and not synced) like a film.
       live: isChannel() || undefined,
+      // What this device decodes, so the server copies rather than converts
+      // whatever it can (HEVC, Dolby audio, surround).
+      caps: capabilities(video),
     });
   } catch (err) {
     if (isStale(gen)) return;
@@ -440,7 +447,8 @@ async function play(next, opts = {}) {
     return;
   }
 
-  note(`server chose: ${reply.mode}`);
+  note(`server chose: ${reply.mode}${reply.segments ? ` (${reply.segments}${reply.audioCopied ? ', audio copied' : ''})` : ''}`);
+  warmNext();
 
   if (reply.mode === 'external') {
     state.session = { mode: 'external', tracks: [], audio: 0 };
@@ -516,11 +524,12 @@ function autoplay(gen) {
 }
 
 function describeConversion(reply) {
-  if (reply.videoCopy) return `Remuxing ${reply.videoCodec}, ${reply.audioCodec} audio.`;
+  if (reply.videoCopy) return `Remuxing ${reply.videoCodec}, ${reply.audioCodec} audio${reply.audioCopied ? ' as is' : ''}.`;
   const where = reply.encoder && reply.encoder !== 'software' ? ` on the GPU (${reply.encoder})` : ' on the CPU';
   const extras = [
     reply.hdr && (reply.toneMapped ? 'HDR tone mapped' : 'HDR, colours may look flat'),
     reply.burn !== null && reply.burn !== undefined && 'subtitles burned in',
+    reply.audioCopied && 'audio as is',
   ].filter(Boolean);
   return `Converting ${reply.videoCodec}${where}${extras.length ? ` · ${extras.join(' · ')}` : ''}.`;
 }
@@ -1544,15 +1553,49 @@ function renderSubtitleMenu() {
 
   select.replaceChildren(option('', 'Off'));
   embedded.forEach((sub) => select.append(option(`e${sub.stream}`, sub.label)));
+  // Every track can also be burned into the picture — including DVD and DVB
+  // bitmaps, which nothing in a browser can draw. Only where the server
+  // converts (not for a restreamed file or a live channel's text).
+  const burnable = state.session && state.session.mode === 'hls' ? (state.embeddedSubs || []) : [];
+  if (burnable.length) {
+    const group = document.createElement('optgroup');
+    group.label = 'Burned in (works everywhere)';
+    burnable.filter((sub) => sub.image || !state.session?.live)
+      .forEach((sub) => group.append(option(`b${sub.stream}`, sub.label.replace(/ \(in file\)$/, ''))));
+    if (group.children.length) select.append(group);
+  }
   wrap.hidden = select.options.length < 2;
 
-  if (state.subtitlesOff) select.value = '';
+  if (Number.isInteger(state.burnPick)) select.value = `b${state.burnPick}`;
+  else if (state.subtitlesOff) select.value = '';
   else if (state.subtitle?.key && [...select.options].some((o) => o.value === state.subtitle.key)) select.value = state.subtitle.key;
   else select.value = '';
 
   select.onchange = () => {
     state.subtitleTouched = true;
     const value = select.value;
+    // Burning in (or out) restarts the stream at the same moment: the
+    // picture itself changes.
+    if (value.startsWith('b') || Number.isInteger(state.burnPick)) {
+      const pick = value.startsWith('b') ? Number(value.slice(1)) : null;
+      if (pick !== state.burnPick) {
+        state.subtitle = null;
+        state.subtitlesOff = pick !== null || value === '';
+        syncSubtitles();
+        setStatus(pick !== null ? 'Burning in subtitles…' : 'Switching subtitles…');
+        const resumeAt = state.video?.currentTime || undefined;
+        play(state.index, { burn: pick, resumeAt, audio: state.session?.audio }).then(() => {
+          if (pick === null && value.startsWith('e')) {
+            state.subtitlesOff = false;
+            const sub = embedded.find((t) => `e${t.stream}` === value);
+            if (sub) state.subtitle = { key: value, url: sub.url, label: sub.label, lang: sub.lang, pgs: sub.render === 'pgs' };
+            syncSubtitles();
+            renderSubtitleMenu();
+          }
+        });
+        return;
+      }
+    }
     const label = select.selectedOptions[0]?.textContent || '';
     const sub = value.startsWith('e') ? embedded.find((t) => `e${t.stream}` === value) : null;
 
@@ -1568,6 +1611,15 @@ function renderSubtitleMenu() {
 }
 
 // ----------------------------------------------------------------- queue
+
+// The next item in the queue (the next episode, usually) is probed while this
+// one plays, so pressing Next starts in a second or two rather than five.
+function warmNext() {
+  const next = state.ticket?.items?.[state.index + 1];
+  if (!next?.transcodeKey || next.warmed) return;
+  next.warmed = true;
+  post('/api/transcode/warm', { u: next.transcodeKey.u, s: next.transcodeKey.s }).catch(() => {});
+}
 
 function renderQueue() {
   const list = $('#watch-queue');

@@ -280,3 +280,68 @@ export function openInVlc(streamUrl, onFailure) {
     if (!settled && !document.hidden) onFailure?.();
   }, HANDOFF_GRACE_MS + 1500);
 }
+
+// ------------------------------------------------------ device profile
+//
+// What this device decodes, sent with every play request so the server can
+// decide as Plex does: play the file as it is, copy what it can and convert
+// only the rest, or convert it all. Without this every device was treated as
+// the weakest browser — HEVC re-encoded on an iPhone that plays it natively,
+// 5.1 Dolby mixed down to stereo on an Apple TV.
+//
+// hls.js feeds MediaSource, so MediaSource's answer is the one that counts
+// there; Safari's own player is asked through canPlayType.
+const PROBES = {
+  video: {
+    h264: 'video/mp4; codecs="avc1.640028"',
+    hevc: 'video/mp4; codecs="hvc1.1.6.L120.90"',
+    hevc10: 'video/mp4; codecs="hvc1.2.4.L153.90"',
+    av1: 'video/mp4; codecs="av01.0.08M.08"',
+    vp9: 'video/mp4; codecs="vp09.00.40.08"',
+  },
+  audio: {
+    aac: 'audio/mp4; codecs="mp4a.40.2"',
+    ac3: 'audio/mp4; codecs="ac-3"',
+    eac3: 'audio/mp4; codecs="ec-3"',
+    flac: 'audio/mp4; codecs="fLaC"',
+    opus: 'audio/mp4; codecs="opus"',
+  },
+};
+
+let cachedCaps = null;
+
+export function capabilities(video) {
+  if (cachedCaps) return cachedCaps;
+  const el = video || document.createElement('video');
+  const native = Boolean(el.canPlayType?.('application/vnd.apple.mpegurl'));
+  const MS = window.ManagedMediaSource || window.MediaSource;
+  const ok = (type) => {
+    try {
+      if (native) return el.canPlayType(type) !== '';
+      return Boolean(MS?.isTypeSupported?.(type));
+    } catch { return false; }
+  };
+  const pick = (table) => Object.keys(table).filter((k) => ok(table[k]));
+
+  let channels = 2;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      const ctx = new Ctx();
+      channels = ctx.destination?.maxChannelCount || 2;
+      ctx.close?.();
+    }
+  } catch { /* stereo */ }
+
+  const apple = device.os === 'ios' || device.os === 'macos';
+  cachedCaps = {
+    native,
+    video: pick(PROBES.video),
+    audio: pick(PROBES.audio),
+    // An HDR screen, or an Apple device (which tone maps HDR10 itself and
+    // gets it right).
+    hdr: apple || Boolean(window.matchMedia?.('(dynamic-range: high)').matches),
+    channels: Math.max(2, Math.min(8, channels)),
+  };
+  return cachedCaps;
+}

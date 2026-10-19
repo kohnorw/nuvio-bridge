@@ -1578,6 +1578,18 @@ app.get('/media', async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// Warming up: the player says what it will probably play next (the stream
+// it is about to start, the next episode). Probing the file and reading its
+// keyframe index takes a few seconds on a debrid link; done now, the start
+// itself is quicker. Cheap to repeat: both are cached.
+app.post('/api/transcode/warm', requireUser, async (req, res) => {
+  if (!transcode.isAvailable()) return res.json({ ok: false });
+  const url = await signing.verify(req.body?.u, req.body?.s);
+  if (!url) return res.status(403).json({ error: 'Expired or invalid link.' });
+  transcode.warm(url);
+  return res.json({ ok: true });
+});
+
 // Starting a conversion. Returns an HLS playlist URL once there is enough
 // converted to play without stalling on the first segment.
 app.post('/api/transcode/start', requireUser, async (req, res) => {
@@ -1591,8 +1603,12 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
   if (req.body?.replace) transcode.stop(String(req.body.replace));
 
   try {
-    const plan = await transcode.inspect(url);
-    // An image subtitle to burn in (ffmpeg stream index), or none.
+    // What this device decodes (public/platform.js). The file's plan is read
+    // against it, so an iPhone gets HEVC and Dolby audio as they are where a
+    // Chromebook gets them converted.
+    const caps = req.body?.caps && typeof req.body.caps === 'object' ? req.body.caps : null;
+    const plan = transcode.adapt(await transcode.inspect(url), url, transcode.deviceCaps(caps));
+    // A subtitle track to burn in (ffmpeg stream index), or none.
     const burn = Number.isInteger(req.body?.burn) ? req.body.burn : null;
     const prefs = playbackPrefs(req.user);
 
@@ -1673,6 +1689,7 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       encode: req.body?.encodeVideo === true,
       quality,
       live: req.body?.live === true,
+      caps,
     });
     // The subtitle the player will turn on by itself: start reading it now,
     // from where playback starts, so it's there with the first frame.
@@ -1789,6 +1806,14 @@ app.get('/hls/:sid/:file', (req, res) => {
   // Segments are made on demand: a seek to one that doesn't exist yet
   // restarts ffmpeg right there and this waits for it.
   return transcode.segment(sid, file).then((found) => {
+    if (found.data) {
+      // fMP4: the init, or a segment's fragments cut out of its file.
+      res.type(found.type || 'video/mp4');
+      res.setHeader('cache-control', 'private, max-age=60');
+      const began = Date.now();
+      res.on('finish', () => transcode.recordDelivery(sid, found.data.length, Date.now() - began));
+      return res.end(found.data);
+    }
     if (!found.path) return res.status(found.status || 404).type('text/plain').send(found.error || 'No such segment.');
     res.type('video/mp2t');
     res.setHeader('cache-control', 'private, max-age=60');
