@@ -1165,6 +1165,15 @@ function remoteShowable(e) {
   return e.duration > 0 && e.position >= 30 && e.position / e.duration < progress.FINISHED;
 }
 
+// Live channels in Nuvio's Continue watching — what the IPTV addon's
+// channels become when watched in the Nuvio apps. A channel has no length or
+// position to go by, so "watched in the last week" is what puts it on the
+// row, as for channels watched here.
+const LIVE_ROW_MS = 7 * 24 * 60 * 60_000;
+function remoteLive(e) {
+  return e.type === 'tv' && Date.now() - e.updatedAt < LIVE_ROW_MS;
+}
+
 async function continueWatching(user, index) {
   const local = await progress.list(user, index);
   let remote;
@@ -1175,9 +1184,10 @@ async function continueWatching(user, index) {
     return local.filter(progress.showable).slice(0, 20);
   }
 
-  // One card per title: its most recent episode.
+  // One card per title: its most recent episode. Live channels are cards of
+  // their own, by full id.
   const latest = new Map();
-  for (const e of remote) {
+  for (const e of remote.filter((r) => r.type !== 'tv')) {
     const prev = latest.get(e.contentId);
     if (!prev || e.updatedAt > prev.updatedAt) latest.set(e.contentId, e);
   }
@@ -1189,12 +1199,25 @@ async function continueWatching(user, index) {
       if (!cards.some((c) => progress.baseId(c.id) === progress.baseId(e.id))) cards.push(e);
     }
   }
-  // Live channels watched here: Nuvio's progress sync has no place for them
-  // (it needs a position and a length), so they come from the bridge's store.
-  for (const e of local.filter((l) => l.live && progress.showable(l))) cards.push(e);
+  // Live channels: from Nuvio (watched in the Nuvio apps) and from here,
+  // one card each, the more recent kept.
+  const channels = new Map();
+  for (const e of remote.filter(remoteLive)) {
+    channels.set(e.contentId, { ...e, id: e.contentId, live: true, position: 0, duration: 0 });
+  }
+  for (const e of local.filter((l) => l.live && progress.showable(l))) {
+    const there = channels.get(e.id);
+    if (!there || there.updatedAt < e.updatedAt) channels.set(e.id, { ...there, ...e });
+  }
+  cards.push(...channels.values());
   cards.sort((a, b) => b.updatedAt - a.updatedAt);
   const top = cards.slice(0, 20);
-  return Promise.all(top.map(async (e) => ({ ...e, ...(e.upNext || e.live ? {} : await artFor(user, e, local)) })));
+  // Artwork for anything that doesn't carry its own — Nuvio's rows have
+  // none, channels included (their logo comes from the IPTV addon's meta).
+  return Promise.all(top.map(async (e) => ({
+    ...e,
+    ...(e.upNext || (e.live && e.poster) ? {} : await artFor(user, e, local)),
+  })));
 }
 
 app.get('/api/progress', requireUser, async (req, res, next) => {
@@ -1272,7 +1295,10 @@ app.delete('/api/progress/:id', requireUser, async (req, res, next) => {
     try {
       const token = await accessToken(user);
       const remote = await nuvio.pullProgress(token, index);
-      const keys = remote.filter((e) => e.contentId === progress.baseId(id)).map((e) => e.key).filter(Boolean);
+      // A channel's id is whole ("iptv:cnn-x101"); a show's episodes share
+      // the show's id.
+      const keys = remote.filter((e) => e.contentId === id || e.contentId === progress.baseId(id))
+        .map((e) => e.key).filter(Boolean);
       await nuvio.deleteProgress(token, index, keys);
     } catch (err) {
       console.error(`continue watching: Nuvio delete failed (${err.message})`);

@@ -357,7 +357,9 @@ export async function pullProgress(accessToken, profileIndex, { limit = 100 } = 
   return (rows || []).map((r) => ({
     key: r.progress_key,
     contentId: r.content_id,
-    type: r.content_type === 'series' || r.content_type === 'tv' ? 'series' : 'movie',
+    // 'tv' is a live channel (the IPTV addon's iptv:… ids) and stays one —
+    // it was folded into 'series', which lost every channel.
+    type: r.content_type === 'tv' ? 'tv' : r.content_type === 'series' ? 'series' : 'movie',
     // The id the player and the addons use: the episode's id for a show.
     id: r.video_id || r.content_id,
     season: r.season ?? null,
