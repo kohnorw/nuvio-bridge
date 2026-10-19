@@ -615,8 +615,8 @@ Vision profile 5 is still converted (it has no HDR10 layer).
 
 ### Burned-in subtitles
 
-The subtitle menu lists every track a second time under **Burned in**. Picking
-one restarts the stream at the same moment with the subtitles drawn into the
+Subtitles are only offered burned in: the subtitle menu lists the file's tracks
+and **Off**, and nothing is drawn by the player itself. Picking one restarts the stream at the same moment with the subtitles drawn into the
 picture — they then show everywhere, including Safari's fullscreen player, TVs,
 and DVD / DVB bitmap tracks no browser can draw. Pictures (PGS, VobSub, DVB)
 are overlaid at the output size; text (SRT, ASS) is drawn by libass from the
@@ -629,8 +629,8 @@ only the next minute of it.
   browser reports its channel count): there it goes out as it is (AC-3 / E-AC-3
   on Apple devices) or as 5.1 AAC. Elsewhere it is mixed down to stereo.
 - **ASS subtitle styling** is reduced to plain text when the browser draws the
-  subtitles. Choose the track under *Burned in* in the subtitle menu for the
-  full styling (with the file's own fonts); VLC renders it fully too.
+  subtitles. Picked from the subtitle menu, it is burned in with the full
+  styling (with the file's own fonts); VLC renders it fully too.
 - **Dolby Vision profile 5** (no HDR10 base layer, common in streaming rips)
   converts with wrong colours. Profiles 7 and 8 use their HDR10 layer and are
   fine.
