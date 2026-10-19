@@ -728,7 +728,7 @@ function thaw(s) {
  * @param {string} url
  * @param {{ audio?: number, seek?: number, burn?: number|null, plan?: object }} opts
  */
-export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false, quality = 'original' } = {}) {
+export async function start(url, { audio = 0, seek = 0, burn = null, plan = null, aligned = false, encode = false, quality = 'original', live = false } = {}) {
   if (!isAvailable()) throw new Error('ffmpeg is not in this build.');
   if (busy()) throw new Error('Too many conversions are already running.');
 
@@ -747,7 +747,8 @@ export async function start(url, { audio = 0, seek = 0, burn = null, plan = null
   const dir = path.join(HLS_ROOT, sid);
   await fsp.mkdir(dir, { recursive: true });
 
-  const exact = details.durationExact || 0;
+  // A TV channel is live even when its stream reports a length.
+  const exact = live ? 0 : (details.durationExact || 0);
   let bounds = null;
   if (exact && details.videoCopy && burn == null && /matroska/.test(String(details.container))) {
     const found = await (early || keyframeIndex(url));

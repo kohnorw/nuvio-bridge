@@ -1203,7 +1203,14 @@ async function continueWatching(user, index) {
   // one card each, the more recent kept.
   const channels = new Map();
   for (const e of remote.filter(remoteLive)) {
-    channels.set(e.contentId, { ...e, id: e.contentId, live: true, position: 0, duration: 0 });
+    // A channel opened from a category folder in the Nuvio apps is stored as
+    // the folder (content) with the channel inside it (video): the card is
+    // the channel. Opened directly, both are the channel.
+    const channel = e.id || e.contentId;
+    const there = channels.get(channel);
+    if (!there || there.updatedAt < e.updatedAt) {
+      channels.set(channel, { ...e, id: channel, contentId: channel, live: true, position: 0, duration: 0, season: null, episode: null });
+    }
   }
   for (const e of local.filter((l) => l.live && progress.showable(l))) {
     const there = channels.get(e.id);
@@ -1310,7 +1317,7 @@ app.delete('/api/progress/:id', requireUser, async (req, res, next) => {
       const remote = await nuvio.pullProgress(token, index);
       // A channel's id is whole ("iptv:cnn-x101"); a show's episodes share
       // the show's id.
-      const keys = remote.filter((e) => e.contentId === id || e.contentId === progress.baseId(id))
+      const keys = remote.filter((e) => e.contentId === id || e.id === id || e.contentId === progress.baseId(id))
         .map((e) => e.key).filter(Boolean);
       await nuvio.deleteProgress(token, index, keys);
     } catch (err) {
@@ -1648,6 +1655,7 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
       // remux: convert the video rather than copying it again.
       encode: req.body?.encodeVideo === true,
       quality,
+      live: req.body?.live === true,
     });
     // The subtitle the player will turn on by itself: start reading it now,
     // from where playback starts, so it's there with the first frame.

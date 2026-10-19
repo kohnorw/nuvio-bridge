@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=102';
-import * as controls from './controls.js?v=102';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=103';
+import * as controls from './controls.js?v=103';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -394,6 +394,7 @@ async function play(next, opts = {}) {
 
   if (!item.transcodeKey) {
     note('no ffmpeg — playing the source directly');
+    if (isChannel()) startLiveReports(gen);
     embeddedKnown();
     state.session = { mode: 'source', tracks: [], audio: 0, quality: 'original' };
     renderQualityMenu();
@@ -419,6 +420,9 @@ async function play(next, opts = {}) {
       nativeHls: nativeHls(video) || undefined,
       encodeVideo: opts.encodeVideo === true || undefined,
       quality: opts.quality || startLevel(),
+      // A channel is live whatever its stream claims: some IPTV streams
+      // report a duration, and were played (and not synced) like a film.
+      live: isChannel() || undefined,
     });
   } catch (err) {
     if (isStale(gen)) return;
@@ -468,6 +472,7 @@ async function play(next, opts = {}) {
   chooseDefaultSubtitle();
 
   watchQuality(gen);
+  if (reply.mode === 'direct' && isChannel()) startLiveReports(gen);
   if (reply.mode === 'direct') {
     $('#watch-stage').classList.remove('is-live');
     load(gen, { src: reply.url, type: 'video/mp4', resumeAt });
@@ -482,7 +487,7 @@ async function play(next, opts = {}) {
   // of a seek bar and joins at "now".
   $('#watch-stage').classList.toggle('is-live', Boolean(reply.live));
   // Live channels go on Continue watching as "recently watched".
-  if (reply.live && current()?.id) post('/api/progress', { type: 'tv', id: current().id }).catch(() => {});
+  if (isChannel()) startLiveReports(gen);
   load(gen, { src: reply.url, type: 'application/x-mpegURL', resumeAt: reply.live ? 0 : resumeAt, live: Boolean(reply.live) });
   if (reply.live) watchLive(gen);
   watchForSilence(gen);
@@ -945,6 +950,32 @@ function reportProgress({ finished = false, leaving = false } = {}) {
     .catch((err) => note(`progress not saved: ${err.message}`));
 }
 
+// Live TV: what was played is a channel from a TV listing.
+function isChannel() {
+  return state.ticket?.type === 'tv';
+}
+
+// A channel goes on Continue watching here and in the Nuvio apps when it
+// starts, again every two minutes while it plays (so "most recent" stays
+// true across devices, and one failed request doesn't lose it), and when the
+// page goes away. It used to be reported once, at the start, and only when
+// the server had decided the stream was live.
+const LIVE_REPORT_MS = 120_000;
+let liveReportTimer = null;
+function startLiveReports(gen) {
+  clearInterval(liveReportTimer);
+  const id = current()?.id;
+  if (!id) return;
+  const send = () => post('/api/progress', { type: 'tv', id })
+    .then((reply) => { if (reply?.synced === false) note(`Nuvio sync failed: ${reply.error}`); })
+    .catch((err) => note(`channel not saved: ${err.message}`));
+  send();
+  liveReportTimer = setInterval(() => {
+    if (isStale(gen) || current()?.id !== id) { clearInterval(liveReportTimer); return; }
+    if (!state.video?.paused) send();
+  }, LIVE_REPORT_MS);
+}
+
 // The page is going away (app closed, swiped off, phone locked, tab
 // switched). An ordinary request is cancelled with the page, which is how
 // the last minutes of a film — or all of a short session — never reached
@@ -960,7 +991,7 @@ function sendOnExit(body) {
 
 function reportOnExit() {
   if (!state.video || !state.ticket) return;
-  if (state.session?.live) {
+  if (isChannel()) {
     const id = current()?.id;
     if (id) sendOnExit({ type: 'tv', id });
     return;
