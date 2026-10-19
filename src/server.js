@@ -1184,6 +1184,21 @@ async function continueWatching(user, index) {
     return local.filter(progress.showable).slice(0, 20);
   }
 
+  // Removed in a Nuvio app: anything this bridge has written to Nuvio
+  // (syncedAt) that Nuvio no longer has was taken off Continue watching
+  // somewhere else, so it goes here too — channels included, which otherwise
+  // lived on in the bridge's own store. Entries that never reached Nuvio (a
+  // failed push) are kept; they were never there to be removed.
+  const inNuvio = new Set();
+  for (const e of remote) { inNuvio.add(e.contentId); if (e.id) inNuvio.add(e.id); }
+  const removedElsewhere = local.filter((l) => l.syncedAt && !l.upNext
+    && !inNuvio.has(l.type === 'tv' ? l.id : progress.baseId(l.id)) && !inNuvio.has(l.id));
+  for (const gone of removedElsewhere) await progress.remove(user, index, gone.id);
+  if (removedElsewhere.length) {
+    const goneIds = new Set(removedElsewhere.map((g) => g.id));
+    for (let i = local.length - 1; i >= 0; i -= 1) if (goneIds.has(local[i].id)) local.splice(i, 1);
+  }
+
   // One card per title: its most recent episode. Live channels are cards of
   // their own, by full id.
   const latest = new Map();
@@ -1260,6 +1275,7 @@ app.post('/api/progress', requireUser, async (req, res, next) => {
         await nuvio.pushProgress(await accessToken(req.user), index, {
           contentId: String(id), type: 'tv', id: String(id), position: Math.max(1, position), duration,
         });
+        await progress.record(req.user, index, { type: 'tv', id: String(id), syncedAt: Date.now() });
         return res.json({ ok: true, synced: true });
       } catch (err) {
         console.error(`continue watching: Nuvio push failed for ${id} (${err.message})`);
@@ -1295,6 +1311,7 @@ app.post('/api/progress', requireUser, async (req, res, next) => {
     });
     try {
       await nuvio.pushProgress(token, index, { contentId, type, id: String(id), position, duration, ...parts });
+      await progress.record(user, index, { type, id: String(id), syncedAt: Date.now() });
     } catch (err) {
       // Said in the reply too, so the player's trace shows it rather than it
       // vanishing into the server log.
