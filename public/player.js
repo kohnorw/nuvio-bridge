@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=101';
-import * as controls from './controls.js?v=101';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink } from './platform.js?v=102';
+import * as controls from './controls.js?v=102';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -931,18 +931,44 @@ async function nextEpisode() {
   }
 }
 
-function reportProgress({ finished = false } = {}) {
+function reportProgress({ finished = false, leaving = false } = {}) {
   const { video, ticket } = state;
   const item = current();
   if (!video || !item?.id || !['movie', 'series'].includes(ticket?.type)) return;
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
   const position = finished ? duration : (video.currentTime || 0);
   if (!duration || (!finished && position < 5)) return;
-  post('/api/progress', {
-    type: ticket.type, id: item.id, position, duration,
-    episodeTitle: item.heading?.detail || null,
-  }).catch(() => {});
+  const body = { type: ticket.type, id: item.id, position, duration, episodeTitle: item.heading?.detail || null };
+  if (leaving) { sendOnExit(body); return; }
+  post('/api/progress', body)
+    .then((reply) => { if (reply?.synced === false) note(`Nuvio sync failed: ${reply.error}`); })
+    .catch((err) => note(`progress not saved: ${err.message}`));
 }
+
+// The page is going away (app closed, swiped off, phone locked, tab
+// switched). An ordinary request is cancelled with the page, which is how
+// the last minutes of a film — or all of a short session — never reached
+// Nuvio. keepalive lets this one finish after the page is gone.
+function sendOnExit(body) {
+  try {
+    fetch('/api/progress', {
+      method: 'POST', credentials: 'same-origin', keepalive: true,
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    }).catch(() => {});
+  } catch { /* nothing more to try */ }
+}
+
+function reportOnExit() {
+  if (!state.video || !state.ticket) return;
+  if (state.session?.live) {
+    const id = current()?.id;
+    if (id) sendOnExit({ type: 'tv', id });
+    return;
+  }
+  reportProgress({ leaving: true });
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') reportOnExit(); });
+window.addEventListener('pagehide', reportOnExit);
 
 // ---------------------------------------------------------------- sources
 

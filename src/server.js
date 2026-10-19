@@ -1237,8 +1237,10 @@ app.post('/api/progress', requireUser, async (req, res, next) => {
     const duration = Math.max(0, Number(req.body?.duration) || 0);
     if (!['movie', 'series', 'tv'].includes(type) || !id) return res.status(400).json({ error: 'type and id, please.' });
 
-    // A live channel: remember that it was watched, with its logo and name,
-    // for the Continue watching row. Kept on the bridge only.
+    // A live channel: remembered here with its logo and name, and written to
+    // Nuvio's Continue watching the way the Nuvio apps store the IPTV
+    // addon's channels (content_type 'tv', the channel as content and video),
+    // so it shows on the TV and phone too.
     if (type === 'tv') {
       const index = await profileIndex(req.user);
       const known = (await progress.list(req.user, index)).find((e) => e.type === 'tv' && e.id === String(id));
@@ -1247,7 +1249,15 @@ app.post('/api/progress', requireUser, async (req, res, next) => {
         type: 'tv', id: String(id), live: true, position: 0, duration: 0,
         ...art, ...(known?.poster ? {} : { background: null }),
       });
-      return res.json({ ok: true });
+      try {
+        await nuvio.pushProgress(await accessToken(req.user), index, {
+          contentId: String(id), type: 'tv', id: String(id), position: Math.max(1, position), duration,
+        });
+        return res.json({ ok: true, synced: true });
+      } catch (err) {
+        console.error(`continue watching: Nuvio push failed for ${id} (${err.message})`);
+        return res.json({ ok: true, synced: false, error: err.message });
+      }
     }
 
     const user = req.user;
@@ -1279,9 +1289,12 @@ app.post('/api/progress', requireUser, async (req, res, next) => {
     try {
       await nuvio.pushProgress(token, index, { contentId, type, id: String(id), position, duration, ...parts });
     } catch (err) {
-      console.error(`continue watching: Nuvio push failed (${err.message})`);
+      // Said in the reply too, so the player's trace shows it rather than it
+      // vanishing into the server log.
+      console.error(`continue watching: Nuvio push failed for ${id} (${err.message})`);
+      return res.json({ ok: true, synced: false, error: err.message });
     }
-    return res.json({ ok: true });
+    return res.json({ ok: true, synced: true });
   } catch (err) { return next(err); }
 });
 
