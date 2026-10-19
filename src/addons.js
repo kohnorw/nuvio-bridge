@@ -359,6 +359,10 @@ export async function meta(addons, type, id) {
   if (!found) return null;
 
   const m = found.data.meta;
+  const videos = (m.videos || []).map(normalizeVideo).sort(byEpisodeOrder);
+  if (type === 'series' && /^tt\d+$/.test(String(m.imdb_id || m.id || id).split(':')[0])) {
+    await fillEpisodeRatings(String(m.imdb_id || m.id || id).split(':')[0], videos);
+  }
   return {
     ...normalizeMeta(m),
     description: m.description,
@@ -370,8 +374,54 @@ export async function meta(addons, type, id) {
     status: m.status || null,
     cast: (m.cast || []).slice(0, 6),
     director: (m.director || []).slice(0, 3),
-    videos: (m.videos || []).map(normalizeVideo).sort(byEpisodeOrder),
+    videos,
   };
+}
+
+// Episode ratings. Cinemeta has them for older shows but sends "0" for every
+// episode of most recent ones (Andor, Severance, The Bear…), which showed as
+// "★ 0". Missing ones are filled from TVmaze — free, no key, looked up by
+// IMDb id — and cached for a day. If TVmaze doesn't know the show either,
+// the episodes simply show no rating.
+const episodeRatings = new Map();
+const RATINGS_TTL_MS = 24 * 60 * 60_000;
+
+async function tvmazeRatings(imdbId) {
+  const hit = episodeRatings.get(imdbId);
+  if (hit && Date.now() - hit.at < RATINGS_TTL_MS) return hit.ratings;
+  const ratings = new Map();
+  try {
+    const signal = AbortSignal.timeout(5000);
+    const show = await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${imdbId}`, { redirect: 'follow', signal });
+    if (show.ok) {
+      const { id } = await show.json();
+      const res = await fetch(`https://api.tvmaze.com/shows/${id}/episodes?specials=1`, { signal });
+      if (res.ok) {
+        for (const e of await res.json()) {
+          const value = Number(e.rating?.average);
+          if (value > 0) ratings.set(`${e.season}:${e.number}`, value);
+        }
+      }
+    }
+  } catch { /* no ratings is fine */ }
+  if (episodeRatings.size > 500) episodeRatings.clear();
+  episodeRatings.set(imdbId, { at: Date.now(), ratings });
+  return ratings;
+}
+
+async function fillEpisodeRatings(imdbId, videos) {
+  if (!videos.some((v) => v.rating == null && v.season != null)) return;
+  const ratings = await tvmazeRatings(imdbId);
+  for (const v of videos) {
+    if (v.rating == null) v.rating = ratings.get(`${v.season}:${v.episode}`)?.toFixed(1) ?? null;
+  }
+}
+
+// A rating as shown: one decimal, or null when there isn't a real one.
+// Addons use 0 (or "0") to mean "not rated".
+function ratingOf(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n.toFixed(1) : null;
 }
 
 // Addons disagree about what an episode's fields are called — Cinemeta says
@@ -388,7 +438,7 @@ function normalizeVideo(v) {
     thumbnail: v.thumbnail || v.poster || v.still || null,
     overview: v.overview || v.description || null,
     runtime: v.runtime || null,
-    rating: v.rating || v.imdbRating || null,
+    rating: ratingOf(v.rating) ?? ratingOf(v.imdbRating),
   };
 }
 
