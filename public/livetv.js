@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=114';
+import * as platform from './platform.js?v=115';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;

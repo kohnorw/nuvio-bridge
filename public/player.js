@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=114';
-import * as controls from './controls.js?v=114';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=115';
+import * as controls from './controls.js?v=115';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -562,13 +562,15 @@ async function load(gen, { src, type, resumeAt, live = false }) {
   }
 
   const hls = new Hls(live ? {
-    // Live TV: play about two segments behind the newest, and if the
-    // player falls further back than that (a stall, a backgrounded tab),
-    // speed up a little to catch up rather than drifting minutes behind.
-    liveSyncDurationCount: 2,
-    liveMaxLatencyDurationCount: 8,
-    maxLiveSyncPlaybackRate: 1.1,
-    maxBufferLength: 20,
+    // Live TV: sit about four segments (~8 s) behind the newest. That is
+    // the cushion that rides out a slow segment or a provider hiccup without
+    // stalling; closer to live looks quicker but buffers on every wobble.
+    // Only if it drifts well behind (a long stall, a backgrounded tab) does
+    // it speed up slightly to catch up.
+    liveSyncDurationCount: 4,
+    liveMaxLatencyDurationCount: 12,
+    maxLiveSyncPlaybackRate: 1.05,
+    maxBufferLength: 30,
     backBufferLength: 30,
     maxBufferHole: 1,
     // A channel reconnecting on the server leaves a short gap in segments;

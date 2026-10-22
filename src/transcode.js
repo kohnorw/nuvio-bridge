@@ -662,7 +662,10 @@ function buildArgs(s, seg, at = segStart(s, seg)) {
     // A live MPEG-TS joined mid-stream can take a few seconds to reach a
     // keyframe; with only 2 s ffmpeg sometimes finds no video stream at all
     // and the filter graph fails ("matches no streams"). Later flags win.
-    ...(s.live ? ['-analyzeduration', '6M', '-probesize', '8M', '-fflags', '+genpts+discardcorrupt+nobuffer'] : []),
+    // IPTV panels often close a channel's connection every few minutes;
+    // reconnect_at_eof picks it straight back up inside the same ffmpeg
+    // instead of exiting and paying for a full restart (and a gap).
+    ...(s.live ? ['-analyzeduration', '6M', '-probesize', '8M', '-reconnect_at_eof', '1', '-fflags', '+genpts+discardcorrupt'] : []),
     ...vin,
     // Live TV has no timeline to seek in: always start at "now".
     ...(t > 0 && !s.live ? ['-ss', String(t)] : []),
