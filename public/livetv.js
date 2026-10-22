@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=112';
+import * as platform from './platform.js?v=113';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -936,6 +936,7 @@ function openMenu(title, actions) {
   }));
   menu.hidden = false;
   $('#ltv-menu-backdrop').hidden = false;
+  lockPage();
   menu.querySelector('button')?.focus({ preventScroll: true });
   menu.onkeydown = (e) => {
     const items = [...menu.querySelectorAll('button')];
@@ -951,6 +952,7 @@ function closeMenu() {
   if (!menu || menu.hidden) return;
   menu.hidden = true;
   $('#ltv-menu-backdrop').hidden = true;
+  unlockPage();
   $('#ltv-grid')?.focus({ preventScroll: true });
 }
 
@@ -1029,6 +1031,7 @@ function programInfo() {
   }));
   menu.hidden = false;
   $('#ltv-menu-backdrop').hidden = false;
+  lockPage();
   menu.querySelector('button')?.focus({ preventScroll: true });
   menu.onkeydown = (e) => { if (e.key === 'Escape') { closeMenu(); e.preventDefault(); } };
 }
@@ -1233,6 +1236,7 @@ function form(title, fields, toggles, onSave) {
   menu.onkeydown = (e) => { if (e.key === 'Escape') closeMenu(); };
   menu.hidden = false;
   $('#ltv-menu-backdrop').hidden = false;
+  lockPage();
   setTimeout(() => f.querySelector('input')?.focus(), 30);
 }
 
@@ -1331,3 +1335,27 @@ function fitTitle(el) {
     size -= 1; el.style.fontSize = `${size}px`;
   }
 }
+
+// While a menu is open, nothing behind it may move. In an iOS home-screen app
+// a drag (or the end of a long press) otherwise rubber-bands the whole page,
+// fixed menu included. Only a menu that actually has more to show scrolls.
+let pageLock = null;
+function lockPage() {
+  if (pageLock) return;
+  const y = window.scrollY;
+  const onMove = (e) => {
+    const menu = e.target.closest?.('.ltv-menu');
+    if (menu && menu.scrollHeight > menu.clientHeight) return;
+    if (e.cancelable) e.preventDefault();
+  };
+  const onScroll = () => { if (window.scrollY !== y) window.scrollTo(0, y); };
+  document.addEventListener('touchmove', onMove, { passive: false });
+  window.addEventListener('scroll', onScroll);
+  document.documentElement.classList.add('ltv-locked');
+  pageLock = () => {
+    document.removeEventListener('touchmove', onMove);
+    window.removeEventListener('scroll', onScroll);
+    document.documentElement.classList.remove('ltv-locked');
+  };
+}
+function unlockPage() { pageLock?.(); pageLock = null; }

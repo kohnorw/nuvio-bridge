@@ -2409,6 +2409,7 @@ body.ltv-on html { overflow: hidden; }
 /* ---- menus and dialogs (the app's LiveDialog) */
 .ltv-menu-backdrop { z-index: 60; touch-action: none; }
 .ltv-menu { overscroll-behavior: contain; }
+html.ltv-locked, html.ltv-locked body { overflow: hidden; overscroll-behavior: none; }
 .ltv-menu {
   position: fixed; z-index: 61; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: min(460px, calc(100vw - 32px)); max-height: 86dvh; overflow-y: auto;
