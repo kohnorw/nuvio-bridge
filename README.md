@@ -361,6 +361,7 @@ that costs one restart on the CPU rather than every playback from then on.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `TRANSCODE_HWACCEL` | `auto` | `none` forces the CPU, or name one: `nvenc`, `qsv`, `vaapi`, `videotoolbox`, `amf`, `v4l2m2m`. |
+| `TRANSCODE_NVENC_PRESET` | `p2` | NVIDIA speed/quality, `p1` (fastest) to `p7` (best). |
 
 The container needs access to the hardware, which is two things: the device
 passed in (see the commented `deploy:` and `devices:` blocks at the bottom of

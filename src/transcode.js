@@ -412,6 +412,17 @@ function videoArgs(s) {
     chain = !image
       ? `${main}[vout]`
       : `${main}[main];[0:${burn}]scale=${w}:${h},format=yuva420p,hwupload_cuda[sub];[main][sub]overlay_cuda=eof_action=pass:repeatlast=0[vout]`;
+  } else if (accel.name === 'nvenc' && text && filters.has('hwdownload') && filters.has('hwupload_cuda')) {
+    // Text subtitles with NVIDIA: decode, scale and tone map on the GPU, then
+    // bring only the small output-size frame down for libass and send it
+    // back up. Before, a 4K HDR file with SRT subtitles was decoded, scaled
+    // and tone mapped entirely on the CPU just so libass could draw on it.
+    input = ['-init_hw_device', 'cuda=cu:0', '-filter_hw_device', 'cu',
+      '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
+    const main = tm === 'cuda'
+      ? `[0:V:0]scale_cuda=w=${w}:h=${h}:format=p010,tonemap_cuda=format=yuv420p:p=bt709:t=bt709:m=bt709:tonemap=bt2390:peak=100:desat=0`
+      : `[0:V:0]scale_cuda=w=${w}:h=${h}:format=yuv420p`;
+    chain = `${main},hwdownload,format=yuv420p,${text},hwupload_cuda[vout]`;
   } else if (accel.name === 'vaapi') {
     const dev = '/dev/dri/renderD128';
     const tone = tm === 'vaapi' ? ',tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709' : '';

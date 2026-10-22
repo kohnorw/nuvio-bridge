@@ -39,8 +39,14 @@ const CANDIDATES = [
     decode: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
     encode: (quality, _preset, cap) => [
       '-c:v', 'h264_nvenc',
-      '-preset', 'p4',
+      // p2 is roughly twice as fast as p4 for a small quality cost that the
+      // constant-quality target mostly absorbs. TRANSCODE_NVENC_PRESET=p4
+      // (or p1..p7) overrides it.
+      '-preset', process.env.TRANSCODE_NVENC_PRESET || 'p2',
       '-tune', 'hq',
+      // No look-ahead: frames go out as soon as they're encoded, so the
+      // first segment of a stream (and every seek) is ready sooner.
+      '-rc-lookahead', '0',
       '-rc', 'vbr',
       '-cq', String(quality),
       ...(cap ? ['-maxrate', capped(cap).max, '-bufsize', capped(cap).buf] : []),
