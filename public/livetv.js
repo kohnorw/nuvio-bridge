@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=110';
+import * as platform from './platform.js?v=111';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -1278,29 +1278,41 @@ export async function homeRow(ctx) {
 // Touch long press → contextmenu on the element under the finger. iOS Safari
 // never fires contextmenu itself, and Android fires one we may already have
 // sent, so dedupe; also swallow the click that follows lifting the finger.
+// The target is looked up when the timer fires, since the guide may have
+// re-rendered its rows while the finger was down.
 function onLongPress(el, ms = 500) {
-  let timer = null, sx = 0, sy = 0, target = null, fired = 0;
+  let timer = null, sx = 0, sy = 0, fired = 0;
   const cancel = () => { clearTimeout(timer); timer = null; };
-  el.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+  el.addEventListener('touchstart', (e) => {
     cancel();
-    sx = e.clientX; sy = e.clientY; target = e.target;
+    if (e.touches.length !== 1) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
     timer = setTimeout(() => {
       timer = null;
+      const target = document.elementFromPoint(sx, sy);
+      if (!target || !el.contains(target)) return;
       fired = Date.now();
-      navigator.vibrate?.(15);
+      try { navigator.vibrate?.(15); } catch { /* not supported */ }
       target.dispatchEvent(new MouseEvent('contextmenu', { clientX: sx, clientY: sy, bubbles: true, cancelable: true }));
     }, ms);
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (timer && t && Math.hypot(t.clientX - sx, t.clientY - sy) > 10) cancel();
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    cancel();
+    // Lifting after a long press: no click, no text selection.
+    if (Date.now() - fired < 1000 && e.cancelable) e.preventDefault();
   });
-  el.addEventListener('pointermove', (e) => {
-    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel();
-  });
-  ['pointerup', 'pointercancel', 'scroll'].forEach((t) => el.addEventListener(t, cancel, { passive: true }));
+  ['touchcancel', 'scroll'].forEach((t) => el.addEventListener(t, cancel, { passive: true }));
   el.addEventListener('contextmenu', (e) => {
-    // Native contextmenu arriving right after ours: drop the duplicate.
-    if (e.isTrusted && Date.now() - fired < 1000) { e.preventDefault(); e.stopImmediatePropagation(); }
+    if (!e.isTrusted) return;
+    // Android's own long-press menu event beat our timer: let it through.
+    if (timer) { cancel(); fired = Date.now(); return; }
+    if (Date.now() - fired < 1000) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
   el.addEventListener('click', (e) => {
-    if (Date.now() - fired < 700) { e.preventDefault(); e.stopImmediatePropagation(); }
+    if (Date.now() - fired < 1000) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
 }
