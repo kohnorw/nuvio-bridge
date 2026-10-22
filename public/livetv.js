@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=113';
+import * as platform from './platform.js?v=114';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -890,7 +890,7 @@ async function previewChannel(ch) {
     } else {
       const Hls = await loadHls();
       if (Hls?.isSupported()) {
-        const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 8, maxLiveSyncPlaybackRate: 1.1 });
+        const hls = new Hls({ liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 8, maxLiveSyncPlaybackRate: 1.1 });
         st.preview.hls = hls;
         hls.on(Hls.Events.ERROR, (_, d) => {
           if (d.fatal && gen === st.previewGen) msg.textContent = d.type === 'mediaError' ? 'This browser can’t play the preview' : 'The channel stopped. Press OK to try again.';

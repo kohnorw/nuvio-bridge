@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=113';
-import * as controls from './controls.js?v=113';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=114';
+import * as controls from './controls.js?v=114';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -562,10 +562,10 @@ async function load(gen, { src, type, resumeAt, live = false }) {
   }
 
   const hls = new Hls(live ? {
-    // Live TV: play about three segments behind the newest, and if the
+    // Live TV: play about two segments behind the newest, and if the
     // player falls further back than that (a stall, a backgrounded tab),
     // speed up a little to catch up rather than drifting minutes behind.
-    liveSyncDurationCount: 3,
+    liveSyncDurationCount: 2,
     liveMaxLatencyDurationCount: 8,
     maxLiveSyncPlaybackRate: 1.1,
     maxBufferLength: 20,
