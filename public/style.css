@@ -2481,3 +2481,26 @@ body.ltv-on html { overflow: hidden; }
 }
 @media (min-width: 900px) { body.ltv-on #shell { padding-bottom: 0; } }
 @media (max-width: 899px) { #ltv-group-title { display: none; } }
+
+/* Live TV replay: skip back and forward through the show, on its own clock. */
+.watch-catchup {
+  display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 8px;
+}
+.watch-catchup .ctl-skip {
+  width: auto; min-width: 52px; height: 34px; padding: 0 12px; border-radius: var(--r-full);
+  background: rgb(255 255 255 / 0.14); color: #fff; font: inherit; font-size: 14px; font-weight: 700;
+}
+.watch-catchup .ctl-skip:hover:not(:disabled) { background: rgb(255 255 255 / 0.26); }
+.watch-catchup .ctl-skip:disabled { opacity: var(--o-disabled); }
+.watch-catchup .ctl-golive { background: #E53935; margin-left: 8px; }
+.watch-catchup-pos {
+  min-width: 13em; text-align: center; font-size: 14px; font-variant-numeric: tabular-nums;
+  color: rgb(255 255 255 / 0.85); white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .watch-catchup-pos { order: -1; flex-basis: 100%; }
+  .watch-catchup .ctl-skip { min-width: 46px; padding: 0 8px; font-size: 13px; }
+}
+/* A replay that the server treats as a growing stream is still a replay. */
+.watch-stage.is-catchup .watch-live-badge { display: none; }

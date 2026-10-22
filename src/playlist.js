@@ -50,7 +50,7 @@ function prune() {
 }
 
 export async function create({
-  sid, type, seriesId, episodes, quality, audioLang, subLang, subsOff = false, firstStream, label, heading = null,
+  sid, type, seriesId, episodes, quality, audioLang, subLang, subsOff = false, firstStream, label, heading = null, catchup = null,
 }) {
   await ready();
   prune();
@@ -68,6 +68,7 @@ export async function create({
     firstStream,       // a hand-picked stream for episode one, if there was one
     label,             // what to call this in a player's title bar
     heading,           // { title, detail } for the player, when the caller knows better (Live TV)
+    catchup,           // Live TV replay: { key, start, stop, offset, title } so the player can skip through it
     rendered: null,
     report: null,
     createdAt: Date.now(),

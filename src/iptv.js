@@ -414,7 +414,7 @@ export async function search(userId, query) {
 // ------------------------------------------------------------------ playback
 
 // The URL to play: the channel live, or a replay from the archive.
-export async function playable(userId, key, { start, stop, clientTimezone = '' } = {}) {
+export async function playable(userId, key, { start, stop, offset = 0, clientTimezone = '' } = {}) {
   await ensureLoaded(userId);
   const state = rt(userId);
   const rec = record(userId);
@@ -428,11 +428,15 @@ export async function playable(userId, key, { start, stop, clientTimezone = '' }
 
   const now = Date.now();
   const s = rec.settings;
-  const startMs = Number(start);
-  const stopMs = Number(stop) || startMs + HOUR;
-  if (!ch.catchup || !catchupLib.isAvailable(ch.catchup, startMs, now)) {
+  const showStart = Number(start);
+  const stopMs = Number(stop) || showStart + HOUR;
+  if (!ch.catchup || !catchupLib.isAvailable(ch.catchup, showStart, now)) {
     throw httpError(400, 'This channel has no catch-up for that time.');
   }
+  // Skipping inside a replay asks the archive again from that point.
+  const latest = Math.max(0, Math.min(stopMs + catchupLib.CONTINUE_MS, now - 15_000) - showStart);
+  const offsetMs = Math.max(0, Math.min(Number(offset) || 0, latest));
+  const startMs = showStart + offsetMs;
   // The guide's time shift is taken back off (the archive goes by the
   // guide's own times), then the catch-up time shift added.
   const shift = (s.epgOffsetMinutes || 0) * 60_000 - (s.catchupShiftMinutes || 0) * 60_000;
@@ -461,7 +465,7 @@ export async function playable(userId, key, { start, stop, clientTimezone = '' }
     source.catchupNoHlsSince = now;
     persistSoon();
   }
-  return { url: chosen, live: false, channel: ch, userAgent: source?.userAgent || '' };
+  return { url: chosen, live: false, channel: ch, userAgent: source?.userAgent || '', offsetMs, showStart, showStop: stopMs };
 }
 
 function liveUrlFor(ch, source, rec) {

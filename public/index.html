@@ -14,15 +14,15 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
-<link rel="stylesheet" href="/style.css?v=106">
+<link rel="stylesheet" href="/style.css?v=107">
 <!-- The module graph is app.js → player.js → controls.js: three round trips
      in series if the browser has to discover each import itself. Named here,
      all four are fetched at once. -->
-<link rel="modulepreload" href="/app.js?v=106">
-<link rel="modulepreload" href="/platform.js?v=106">
-<link rel="modulepreload" href="/player.js?v=106">
-<link rel="modulepreload" href="/controls.js?v=106">
-<link rel="modulepreload" href="/livetv.js?v=106">
+<link rel="modulepreload" href="/app.js?v=107">
+<link rel="modulepreload" href="/platform.js?v=107">
+<link rel="modulepreload" href="/player.js?v=107">
+<link rel="modulepreload" href="/controls.js?v=107">
+<link rel="modulepreload" href="/livetv.js?v=107">
 </head>
 <body data-theme="White">
 
@@ -313,6 +313,14 @@
 
     <div id="watch-controls" class="watch-controls">
       <div class="watch-live-badge" aria-label="Live"><span class="watch-live-dot"></span>LIVE</div>
+      <div id="watch-catchup" class="watch-catchup" hidden>
+        <button class="ctl ctl-skip" data-skip="-600" aria-label="Back 10 minutes">−10m</button>
+        <button class="ctl ctl-skip" data-skip="-60" aria-label="Back 1 minute">−1m</button>
+        <span id="watch-catchup-pos" class="watch-catchup-pos"></span>
+        <button class="ctl ctl-skip" data-skip="60" aria-label="Forward 1 minute">+1m</button>
+        <button class="ctl ctl-skip" data-skip="600" aria-label="Forward 10 minutes">+10m</button>
+        <button id="watch-catchup-live" class="ctl ctl-skip ctl-golive" aria-label="Back to live">LIVE</button>
+      </div>
       <div class="watch-seek-row">
         <span id="watch-time" class="ctl-time">0:00</span>
         <input id="watch-seek" class="watch-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek">
@@ -400,6 +408,6 @@
     window.addEventListener('unhandledrejection', function (e) { heal(e.reason && (e.reason.message || e.reason)); });
   })();
 </script>
-<script src="/app.js?v=106" type="module"></script>
+<script src="/app.js?v=107" type="module"></script>
 </body>
 </html>

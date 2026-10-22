@@ -18,8 +18,8 @@
 // so a reply that arrives after the person has moved on is thrown away (and
 // its ffmpeg stopped) instead of taking over the screen.
 
-import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=106';
-import * as controls from './controls.js?v=106';
+import { device, playLink, hasLauncher, launcherInstalled, openInVlc, vlcLink, capabilities } from './platform.js?v=107';
+import * as controls from './controls.js?v=107';
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -181,6 +181,7 @@ export async function mount(options = {}) {
 
 
   await createPlayer();
+  setupCatchup();
 
   renderQueue();
   if (params.get('copy') === '1') copyLink();
@@ -1912,8 +1913,10 @@ function onKey(event) {
     case 'k':
       if (video.paused) video.play()?.catch?.(() => {}); else video.pause();
       break;
-    case 'j': case 'ArrowLeft': seekBy(-step); break;
-    case 'l': case 'ArrowRight': seekBy(step); break;
+    case 'j': case 'ArrowLeft': if (ticket.catchup && event.shiftKey) skipCatchup(-60); else seekBy(-step); break;
+    case 'l': case 'ArrowRight': if (ticket.catchup && event.shiftKey) skipCatchup(60); else seekBy(step); break;
+    case ',': if (ticket.catchup) skipCatchup(-600); break;
+    case '.': if (ticket.catchup) skipCatchup(600); break;
     case 'f':
       controls.toggleFullscreen();
       break;
@@ -1928,4 +1931,110 @@ function onKey(event) {
     default: return;
   }
   event.preventDefault();
+}
+
+
+// ------------------------------------------------------------ catch-up
+
+// A Live TV replay: the show's own clock, and skipping through it. A skip
+// inside what has already arrived just seeks; one past it asks the
+// provider's archive again from that point (which is how the TV app does
+// it), so the whole show can be skipped through even when the provider
+// sends a stream with no length.
+let catchupWired = false;
+let catchupBusy = false;
+
+function catchupPosMs() {
+  const c = state.ticket?.catchup;
+  if (!c) return 0;
+  return (c.offset || 0) + (state.video?.currentTime || 0) * 1000;
+}
+
+function catchupLatestMs() {
+  const c = state.ticket.catchup;
+  return Math.max(0, Math.min(c.stop + 3 * 3_600_000, Date.now() - 15_000) - c.start);
+}
+
+function clockOf(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600); const m = Math.floor((t % 3600) / 60); const sec = t % 60;
+  return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(sec).padStart(2, '0')}`;
+}
+
+function paintCatchup() {
+  const c = state.ticket?.catchup;
+  const box = $('#watch-catchup');
+  if (!box) return;
+  box.hidden = !c;
+  $('#watch-stage').classList.toggle('is-catchup', Boolean(c));
+  if (!c) return;
+  const at = new Date(c.start + catchupPosMs()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  $('#watch-catchup-pos').textContent = `${catchupBusy ? 'Skipping… ' : ''}${clockOf(catchupPosMs())} / ${clockOf(c.stop - c.start)} · aired ${at}`;
+  const pos = catchupPosMs();
+  box.querySelectorAll('[data-skip]').forEach((b) => {
+    const d = Number(b.dataset.skip) * 1000;
+    b.disabled = catchupBusy || (d < 0 ? pos <= 1000 : pos + 1000 >= catchupLatestMs());
+  });
+}
+
+function setupCatchup() {
+  if (!catchupWired) {
+    catchupWired = true;
+    $('#watch-catchup').querySelectorAll('[data-skip]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      skipCatchup(Number(b.dataset.skip));
+    }));
+    $('#watch-catchup-live').addEventListener('click', (e) => { e.stopPropagation(); reloadIptv({ live: true }); });
+    state.video?.addEventListener('timeupdate', paintCatchup);
+  }
+  paintCatchup();
+}
+
+function skipCatchup(seconds) {
+  const c = state.ticket?.catchup;
+  const { video } = state;
+  if (!c || !video || catchupBusy) return;
+  controls.showUi();
+  const target = Math.max(0, Math.min(catchupPosMs() + seconds * 1000, catchupLatestMs()));
+  const local = (target - (c.offset || 0)) / 1000;
+  const { seekable } = video;
+  const end = seekable?.length ? seekable.end(seekable.length - 1) - 2 : 0;
+  const startAt = seekable?.length ? seekable.start(0) : 0;
+  if (local >= startAt && local <= end) {
+    video.currentTime = local;
+    paintCatchup();
+    return;
+  }
+  reloadIptv({ offset: target });
+}
+
+async function reloadIptv({ offset = 0, live = false }) {
+  const c = state.ticket?.catchup;
+  if (!c) return;
+  catchupBusy = true;
+  paintCatchup();
+  $('#watch-spinner').hidden = false;
+  try {
+    const q = new URLSearchParams({
+      key: c.key, title: c.title || '', format: 'json', target: 'browser', os: device.os,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+    });
+    if (!live) { q.set('start', String(c.start)); q.set('stop', String(c.stop)); q.set('offset', String(Math.round(offset))); }
+    const res = await fetch(`/api/iptv/play?${q}`, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.watch) throw new Error(data.error || 'The provider has no replay for that point.');
+    const token = new URLSearchParams(data.watch.split('?')[1]).get('t');
+    state.token = token;
+    try { history.replaceState(history.state, '', data.watch); } catch { /* fine */ }
+    state.ticket = await request(`/api/ticket/${encodeURIComponent(token)}`);
+    renderQueue();
+    await play(0, { resumeAt: 0 });
+  } catch (err) {
+    setStatus(err.message);
+    setTimeout(() => setStatus(''), 4000);
+  } finally {
+    catchupBusy = false;
+    $('#watch-spinner').hidden = true;
+    paintCatchup();
+  }
 }

@@ -645,6 +645,7 @@ async function ensureRecord(req, plan) {
     subLang: '',
     label: title,
     heading: plan.heading || null,
+    catchup: plan.catchup || null,
   });
   await playlists.setRendered(token, playlists.render([
     { url: plan.mediaUrl, title, options: [] },
@@ -1450,7 +1451,7 @@ app.get('/api/iptv/play', requireUser, async (req, res, next) => {
     const key = String(req.query.key || '');
     const start = Number(req.query.start) || 0;
     const stop = Number(req.query.stop) || 0;
-    const got = await iptv.playable(req.user.userId, key, { start, stop, clientTimezone: String(req.query.tz || '') });
+    const got = await iptv.playable(req.user.userId, key, { start, stop, offset: Number(req.query.offset) || 0, clientTimezone: String(req.query.tz || '') });
     const title = String(req.query.title || '').slice(0, 200);
     const channelName = got.channel.name;
     return deliver(req, res, {
@@ -1462,6 +1463,7 @@ app.get('/api/iptv/play', requireUser, async (req, res, next) => {
       title: title ? `${channelName} · ${title}` : channelName,
       filename: `${channelName}.ts`,
       heading: { title: got.live ? channelName : (title || channelName), detail: got.live ? (title || 'Live') : `${channelName} · Catch-up` },
+      catchup: got.live ? null : { key, start: got.showStart, stop: got.showStop, offset: got.offsetMs, title },
     });
   } catch (err) {
     if (err.status) {
@@ -1503,6 +1505,7 @@ app.get('/api/ticket/:token', async (req, res, next) => {
 
     res.json({
       title: record.label || 'Nuvio',
+      catchup: record.catchup || null,
       type: record.type,
       id: record.seriesId,
       proxyAvailable: proxy.enabled,
