@@ -293,6 +293,7 @@ function renderGroups() {
     render();
     $('#ltv-grid').focus({ preventScroll: true });
   }));
+  box.querySelectorAll('[data-group]').forEach((el) => onLongPress(el));
   box.querySelectorAll('[data-group]').forEach((el) => el.addEventListener('contextmenu', (e) => {
     const g = d.groups.find((x) => x.id === el.dataset.group);
     if (!g) return;
@@ -696,19 +697,8 @@ function bindGrid() {
     channelMenu();
   });
 
-  // Long press on touch screens opens the channel menu.
-  let pressTimer = null;
-  grid.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch') return;
-    clearTimeout(pressTimer);
-    pressTimer = setTimeout(() => {
-      grid.dispatchEvent(new MouseEvent('contextmenu', { clientX: e.clientX, clientY: e.clientY, bubbles: true }));
-    }, 600);
-  });
-  ['pointerup', 'pointercancel', 'pointermove'].forEach((t) => grid.addEventListener(t, (e) => {
-    if (t === 'pointermove' && Math.abs(e.movementX) + Math.abs(e.movementY) < 4) return;
-    clearTimeout(pressTimer);
-  }));
+  // Long press on touch screens opens the channel / programme menu.
+  onLongPress(grid);
 
   document.addEventListener('keydown', (e) => {
     if (!st.visible || $('#ltv-menu').hidden === false || e.target.matches?.('input, textarea, select')) {
@@ -1283,4 +1273,34 @@ export async function homeRow(ctx) {
     rail.append(card);
   }
   return section;
+}
+
+// Touch long press → contextmenu on the element under the finger. iOS Safari
+// never fires contextmenu itself, and Android fires one we may already have
+// sent, so dedupe; also swallow the click that follows lifting the finger.
+function onLongPress(el, ms = 500) {
+  let timer = null, sx = 0, sy = 0, target = null, fired = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+    cancel();
+    sx = e.clientX; sy = e.clientY; target = e.target;
+    timer = setTimeout(() => {
+      timer = null;
+      fired = Date.now();
+      navigator.vibrate?.(15);
+      target.dispatchEvent(new MouseEvent('contextmenu', { clientX: sx, clientY: sy, bubbles: true, cancelable: true }));
+    }, ms);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel();
+  });
+  ['pointerup', 'pointercancel', 'scroll'].forEach((t) => el.addEventListener(t, cancel, { passive: true }));
+  el.addEventListener('contextmenu', (e) => {
+    // Native contextmenu arriving right after ours: drop the duplicate.
+    if (e.isTrusted && Date.now() - fired < 1000) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  el.addEventListener('click', (e) => {
+    if (Date.now() - fired < 700) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
 }

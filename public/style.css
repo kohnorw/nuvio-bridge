@@ -2337,6 +2337,7 @@ body.ltv-on html { overflow: hidden; }
 }
 .ltv-ruler-nav button:hover { background: var(--focus-bg); }
 
+.ltv-grid, .ltv-grid *, [data-group] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .ltv-grid { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; outline: none; scrollbar-width: thin; }
 .ltv-rows { position: relative; }
 .ltv-row { position: absolute; left: 0; right: 0; height: var(--ltv-row); display: flex; padding: 3px 0; }
