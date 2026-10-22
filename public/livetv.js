@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=107';
+import * as platform from './platform.js?v=108';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -89,6 +89,24 @@ function marks(title) {
 const pos = (a, b, ws, W) => `left:calc(${((a - ws) / W) * 100}% + 3px);width:calc(${((b - a) / W) * 100}% - 6px)`;
 const floorSlot = (ms) => ms - (((ms % SLOT) + SLOT) % SLOT);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// A channel's logo: the playlist's (or the guide's, per playlist), the other
+// one if that fails to load, and the channel's initials if neither does.
+function initials(name) {
+  const words = String(name || '').replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || '?').slice(0, 3)).toUpperCase();
+}
+window.__ltvLogoFail = (img) => {
+  const alt = img.dataset.alt;
+  if (alt) { img.dataset.alt = ''; img.src = alt; return; }
+  const box = img.parentElement;
+  if (box) box.innerHTML = `<span class="ltv-initials">${esc(box.dataset.initials || '')}</span>`;
+};
+function logoHtml(ch, cls = 'ltv-logo') {
+  const ini = esc(initials(ch.name));
+  if (!ch.logo) return `<span class="${cls}" data-initials="${ini}"><span class="ltv-initials">${ini}</span></span>`;
+  return `<span class="${cls}" data-initials="${ini}"><img src="${esc(ch.logo)}" data-alt="${esc(ch.logoAlt || '')}" alt="" loading="lazy" decoding="async" onerror="__ltvLogoFail(this)"></span>`;
+}
 
 function sizeOf() {
   switch (settings().guideSize) {
@@ -494,7 +512,7 @@ function renderRows(soft = false) {
     html.push(`<div class="ltv-row${focusedRow ? ' row-focused' : ''}" data-i="${i}" style="top:${i * rowH}px">
       <div class="ltv-chan${playing ? ' playing' : ''}">
         ${s.showChannelNumbers ? `<span class="ltv-num">${ch.number}</span>` : ''}
-        ${s.showChannelLogos ? `<span class="ltv-logo">${ch.logo ? `<img src="${esc(ch.logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</span>` : ''}
+        ${s.showChannelLogos ? logoHtml(ch) : ''}
         ${s.showChannelNames ? `<span class="ltv-name">${esc(ch.name)}</span>` : '<span class="ltv-name"></span>'}
         ${ch.catchup ? '<svg class="ltv-ico" viewBox="0 0 24 24" aria-label="Catch-up"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8z"/></svg>' : ''}
         ${favs.has(ch.key) ? '<svg class="ltv-ico ltv-star" viewBox="0 0 24 24" aria-label="Favorite"><path d="M12 17.3 18.2 21l-1.6-7L22 9.2l-7.2-.6L12 2 9.2 8.6 2 9.2 7.5 14l-1.7 7z"/></svg>' : ''}
@@ -568,9 +586,11 @@ function renderHeader() {
   const poster = $('#ltv-poster');
   poster.hidden = !s.showProgramDetails || !ch;
   if (ch) {
-    const art = p?.i || ch.logo;
+    // The show's own picture from the guide; the channel logo when it has none.
     poster.classList.toggle('is-logo', !p?.i);
-    poster.innerHTML = art ? `<img src="${esc(art)}" alt="" onerror="this.remove()">` : '';
+    poster.innerHTML = p?.i
+      ? `<img src="${esc(p.i)}" alt="" onerror="this.parentElement.classList.add('is-logo');this.outerHTML=${esc(JSON.stringify(logoHtml(ch, 'ltv-poster-logo')))}">`
+      : logoHtml(ch, 'ltv-poster-logo');
   }
   const info = $('#ltv-info');
   if (!s.showProgramDetails || !ch) {
@@ -590,7 +610,7 @@ function renderHeader() {
     }
     info.innerHTML = `
       <div class="ltv-chline">
-        ${s.showChannelLogos && ch.logo ? `<span class="ltv-chline-logo"><img src="${esc(ch.logo)}" alt="" onerror="this.remove()"></span>` : ''}
+        ${s.showChannelLogos ? logoHtml(ch, 'ltv-chline-logo') : ''}
         <span class="ltv-chline-name">${esc(label)}</span>
         ${live ? '<span class="ltv-tag ltv-tag-live">LIVE</span>' : ''}
         ${ch.catchup ? '<span class="ltv-tag ltv-tag-outline">CATCH-UP</span>' : ''}
@@ -1165,6 +1185,9 @@ export async function renderSettings(ctx) {
       const next = { auto: 'ts', ts: 'm3u8', m3u8: 'auto' }[p.streamFormat] || 'auto';
       actions.push([`Stream format: ${{ ts: 'TS', m3u8: 'HLS (m3u8)' }[p.streamFormat] || 'Auto'}`, async () => { await ctx.post(`/api/iptv/sources/${p.id}`, { streamFormat: next }); afterChange(); }]);
     }
+    actions.push([p.logoSource === 'epg' ? 'Logos: Prefer logos from EPG' : 'Logos: Prefer logos from playlist', async () => {
+      await ctx.post(`/api/iptv/sources/${p.id}/logos`, { logoSource: p.logoSource === 'epg' ? 'playlist' : 'epg' }); afterChange();
+    }]);
     actions.push(['Move up', async () => { await ctx.post(`/api/iptv/sources/${p.id}/move`, { delta: -1 }); afterChange(); }]);
     actions.push(['Move down', async () => { await ctx.post(`/api/iptv/sources/${p.id}/move`, { delta: 1 }); afterChange(); }]);
     actions.push(['Delete playlist', async () => {

@@ -1432,6 +1432,17 @@ app.post('/api/iptv/epgs/:id', requireUser, iptvRoute((req) => { iptv.updateEpg(
 app.delete('/api/iptv/epgs/:id', requireUser, iptvRoute((req) => { iptv.removeEpg(req.user.userId, req.params.id); return { ok: true }; }));
 app.post('/api/iptv/settings', requireUser, iptvRoute((req) => ({ settings: iptv.saveSettings(req.user.userId, req.body || {}) })));
 app.post('/api/iptv/refresh', requireUser, iptvRoute((req) => { iptv.refresh(req.user.userId).catch(() => {}); return { ok: true }; }));
+app.post('/api/iptv/sources/:id/logos', requireUser, iptvRoute((req) => { iptv.setLogoSource(req.user.userId, req.params.id, String(req.body?.logoSource || '')); return { ok: true }; }));
+// Channel logos, fetched and kept by the server (see iptv.logo). Not behind
+// requireUser: <img> loads are plain GETs, and the signature already limits
+// this to logos the server itself handed out.
+app.get('/api/iptv/logo', async (req, res) => {
+  const got = await iptv.logo(req.query.u, req.query.s).catch(() => null);
+  if (!got || got.status !== 200) return res.status(got?.status || 404).end();
+  res.setHeader('content-type', got.type);
+  res.setHeader('cache-control', 'public, max-age=604800, immutable');
+  return res.end(got.body);
+});
 app.get('/api/iptv/channels', requireUser, iptvRoute((req) => iptv.channels(req.user.userId)));
 app.post('/api/iptv/guide', requireUser, iptvRoute(async (req) => {
   const { keys, from, to } = req.body || {};

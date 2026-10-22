@@ -161,6 +161,7 @@ function publicSource(s, accounts) {
     useEmbeddedEpg: s.useEmbeddedEpg !== false,
     importLive: s.importLive !== false,
     streamFormat: s.streamFormat || 'auto',
+    logoSource: s.logoSource || 'playlist',
     serverTimezone: s.serverTimezone || '',
     lastUpdatedMs: s.lastUpdatedMs || 0,
     lastError: s.lastError || null,
@@ -339,6 +340,64 @@ function remember(userId, key) {
   persistSoon();
 }
 
+// ------------------------------------------------------------------ logos
+
+// Channel logos go through this server. Provider logo links are very often
+// plain http (blocked on an https page), slow, or on hosts that refuse
+// browsers; here they are fetched once, kept, and served with long caching.
+// Links are signed so the route can't be used to fetch anything else, and
+// the signature is stable so the browser's cache keeps working.
+let logoKey = null;
+async function logoMac(url) {
+  logoKey ||= crypto.createHash('sha256').update(Buffer.concat([await ready(), Buffer.from('logos')])).digest();
+  return crypto.createHmac('sha256', logoKey).update(url).digest('base64url').slice(0, 22);
+}
+const logoMacSync = (url) => crypto.createHmac('sha256', logoKey).update(url).digest('base64url').slice(0, 22);
+
+function logoPath(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  return `/api/iptv/logo?u=${Buffer.from(url).toString('base64url')}&s=${logoMacSync(url)}`;
+}
+
+const logoCache = new Map(); // url -> { type, body, at } | { missing: true, at }
+let logoBytes = 0;
+const LOGO_CACHE_BYTES = 64 * 1024 * 1024;
+
+export async function logo(u, sig) {
+  let url;
+  try { url = Buffer.from(String(u || ''), 'base64url').toString('utf8'); } catch { return null; }
+  if (!/^https?:\/\//i.test(url) || (await logoMac(url)) !== sig) return { status: 403 };
+  const hit = logoCache.get(url);
+  if (hit && (hit.body || Date.now() - hit.at < HOUR)) {
+    logoCache.delete(url); logoCache.set(url, hit); // most recently used last
+    return hit.body ? { status: 200, type: hit.type, body: hit.body } : { status: 404 };
+  }
+  try {
+    const res = await fetchWithTimeout(url, DEFAULT_UA, 15_000);
+    const type = res.headers.get('content-type') || '';
+    const body = Buffer.from(await res.arrayBuffer());
+    res.cancelTimer?.();
+    if (!res.ok || !/^image\//i.test(type) || !body.length || body.length > 2 * 1024 * 1024) throw new Error('not an image');
+    logoCache.set(url, { type, body, at: Date.now() });
+    logoBytes += body.length;
+    for (const [k, v] of logoCache) {
+      if (logoBytes <= LOGO_CACHE_BYTES) break;
+      logoBytes -= v.body?.length || 0; logoCache.delete(k);
+    }
+    return { status: 200, type, body };
+  } catch {
+    logoCache.set(url, { missing: true, at: Date.now() });
+    return { status: 404 };
+  }
+}
+
+export function setLogoSource(userId, id, logoSource) {
+  const src = record(userId).sources.find((x) => x.id === id);
+  if (!src) throw httpError(404, 'No such playlist.');
+  src.logoSource = logoSource === 'epg' ? 'epg' : 'playlist';
+  persistSoon();
+}
+
 // ------------------------------------------------------------------ public: channels & guide
 
 export async function channels(userId) {
@@ -349,13 +408,23 @@ export async function channels(userId) {
   const hiddenGr = new Set(rec.hiddenGroups);
   const visible = state.channels.filter((c) => !hiddenCh.has(c.key) && !hiddenGr.has(c.groupId));
   const names = Object.fromEntries(rec.sources.map((s) => [s.id, s.name]));
+  await logoMac('');
+  const preferEpg = new Set(rec.sources.filter((s) => s.logoSource === 'epg').map((s) => s.id));
   return {
-    channels: visible.map((c) => ({
+    channels: visible.map((c) => {
+      // Whose logo leads: the playlist's or the guide's (Edit playlist →
+      // Logos), each falling back to the other.
+      const own = c.logo || null;
+      const guideLogo = state.epgLogos.get(c.key) || null;
+      const [first, second] = preferEpg.has(c.sourceId) ? [guideLogo, own] : [own, guideLogo];
+      return {
       key: c.key, sourceId: c.sourceId, name: c.name, number: c.number,
-      logo: c.logo || state.epgLogos.get(c.key) || null,
+      logo: logoPath(first || second),
+      logoAlt: first && second && first !== second ? logoPath(second) : null,
       groupId: c.groupId, group: c.group,
       catchup: c.catchup ? { days: c.catchup.days } : null,
-    })),
+      };
+    }),
     groups: state.groups.filter((g) => !hiddenGr.has(g.id)).map((g) => ({
       ...g, count: g.keys.filter((k) => !hiddenCh.has(k)).length, keys: undefined,
     })),

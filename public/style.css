@@ -2504,3 +2504,18 @@ body.ltv-on html { overflow: hidden; }
 }
 /* A replay that the server treats as a growing stream is still a replay. */
 .watch-stage.is-catchup .watch-live-badge { display: none; }
+
+/* Channel logos: kept to their shape inside a 1.6:1 box, initials when a
+   channel has none (or it won't load). */
+.ltv-logo, .ltv-chline-logo, .ltv-poster-logo { overflow: hidden; }
+.ltv-initials {
+  display: grid; place-items: center; width: 100%; height: 100%;
+  border-radius: 6px; background: var(--ltv-surface-2, #26262B);
+  color: rgb(255 255 255 / 0.7); font-weight: 800; letter-spacing: 0.5px;
+  font-size: calc(11px * var(--ltv-scale, 1)); line-height: 1;
+}
+.ltv-chline-logo .ltv-initials { font-size: 10px; }
+.ltv-poster-logo { width: 80%; aspect-ratio: 1.6; display: grid; place-items: center; }
+.ltv-poster-logo img { width: 100%; height: 100%; object-fit: contain; }
+.ltv-poster-logo .ltv-initials { font-size: 22px; }
+.ltv-poster.is-logo { padding: 0; }
