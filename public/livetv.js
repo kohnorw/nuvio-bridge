@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=111';
+import * as platform from './platform.js?v=112';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -620,6 +620,7 @@ function renderHeader() {
       ${fb ? `<p class="ltv-meta">${esc(meta.join('  ·  '))}</p>` : ''}
       ${live ? `<div class="ltv-progress"><span style="width:${Math.min(100, ((now - fb.s) / Math.max(1, fb.e - fb.s)) * 100)}%"></span></div>` : ''}
       <p class="ltv-desc">${esc(p?.d || (p ? '' : 'No program information'))}</p>`;
+    fitTitle(info.querySelector('.ltv-title'));
   }
   const pv = $('#ltv-preview-msg');
   if (!st.preview) pv.textContent = st.ctx?.transcode() ? 'Press OK on a channel to preview' : 'Preview needs the server’s converter (ffmpeg)';
@@ -935,12 +936,12 @@ function openMenu(title, actions) {
   }));
   menu.hidden = false;
   $('#ltv-menu-backdrop').hidden = false;
-  menu.querySelector('button')?.focus();
+  menu.querySelector('button')?.focus({ preventScroll: true });
   menu.onkeydown = (e) => {
     const items = [...menu.querySelectorAll('button')];
     const i = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown') { items[Math.min(items.length - 1, i + 1)]?.focus(); e.preventDefault(); }
-    if (e.key === 'ArrowUp') { items[Math.max(0, i - 1)]?.focus(); e.preventDefault(); }
+    if (e.key === 'ArrowDown') { items[Math.min(items.length - 1, i + 1)]?.focus({ preventScroll: true }); e.preventDefault(); }
+    if (e.key === 'ArrowUp') { items[Math.max(0, i - 1)]?.focus({ preventScroll: true }); e.preventDefault(); }
     if (e.key === 'Escape' || e.key === 'Backspace') { closeMenu(); e.preventDefault(); }
   };
 }
@@ -1028,7 +1029,7 @@ function programInfo() {
   }));
   menu.hidden = false;
   $('#ltv-menu-backdrop').hidden = false;
-  menu.querySelector('button')?.focus();
+  menu.querySelector('button')?.focus({ preventScroll: true });
   menu.onkeydown = (e) => { if (e.key === 'Escape') { closeMenu(); e.preventDefault(); } };
 }
 
@@ -1258,12 +1259,12 @@ export async function homeRow(ctx) {
     const ch = e.channel;
     const card = document.createElement('button');
     card.className = 'ltv-home-card';
-    const sub = [`${ch.number}  ${ch.name}`, e.now && minutesLeft(e.now.e, now)].filter(Boolean).join(' · ');
+    const left = e.now ? minutesLeft(e.now.e, now) : '';
     card.innerHTML = `${logoHtml(ch, 'ltv-home-logo')}
       <span class="ltv-home-text">
         <b>${esc(e.now ? marks(e.now.t).title : ch.name)}</b>
         ${e.now ? `<span class="ltv-home-bar"><span style="width:${Math.min(100, ((now - e.now.s) / Math.max(1, e.now.e - e.now.s)) * 100)}%"></span></span>` : ''}
-        <small>${esc(sub)}</small>
+        <small><span class="ltv-home-ch">${esc(`${ch.number}  ${ch.name}`)}</span>${left ? `<span class="ltv-home-left"> · ${esc(left)}</span>` : ''}</small>
       </span>`;
     card.title = e.next ? `Next: ${clock(e.next.s)} ${e.next.t}` : '';
     card.addEventListener('click', () => {
@@ -1315,4 +1316,18 @@ function onLongPress(el, ms = 500) {
   el.addEventListener('click', (e) => {
     if (Date.now() - fired < 1000) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
+}
+
+// Shrinks a one-line title until it fits its box (down to 60% of its normal
+// size); anything still too long ends in an ellipsis.
+function fitTitle(el) {
+  if (!el) return;
+  el.style.fontSize = ''; el.style.lineHeight = '';
+  const base = parseFloat(getComputedStyle(el).fontSize);
+  if (!el.clientWidth || el.scrollWidth <= el.clientWidth) return;
+  let size = base * Math.max(0.6, el.clientWidth / el.scrollWidth);
+  el.style.fontSize = `${size}px`; el.style.lineHeight = '1.2';
+  while (el.scrollWidth > el.clientWidth && size > base * 0.6) {
+    size -= 1; el.style.fontSize = `${size}px`;
+  }
 }
