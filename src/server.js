@@ -1443,6 +1443,7 @@ app.get('/api/iptv/logo', async (req, res) => {
   res.setHeader('cache-control', 'public, max-age=604800, immutable');
   return res.end(got.body);
 });
+app.get('/api/iptv/home', requireUser, iptvRoute((req) => iptv.homeRow(req.user.userId)));
 app.get('/api/iptv/channels', requireUser, iptvRoute((req) => iptv.channels(req.user.userId)));
 app.post('/api/iptv/guide', requireUser, iptvRoute(async (req) => {
   const { keys, from, to } = req.body || {};

@@ -460,6 +460,33 @@ export async function guide(userId, keys, from, to) {
   return out;
 }
 
+// Favorites for the home screen row, as the TV app shows them: logo, what's
+// on now with its progress, and the channel. In your Favorites order.
+export async function homeRow(userId) {
+  await ensureLoaded(userId);
+  const rec = record(userId);
+  const all = await channels(userId);
+  const byKey = new Map(all.channels.map((c) => [c.key, c]));
+  const keys = rec.favorites.filter((k) => byKey.has(k));
+  if (!keys.length) return { title: 'Live TV', entries: [] };
+  const now = Date.now();
+  const progs = await guide(userId, keys, now - 6 * HOUR, now + 12 * HOUR);
+  return {
+    title: 'Live TV',
+    entries: keys.map((k) => {
+      const list = progs[k] || [];
+      const i = list.findIndex((p) => now >= p.s && now < p.e);
+      const cur = i >= 0 ? list[i] : null;
+      const next = (i >= 0 ? list[i + 1] : list.find((p) => p.s > now)) || null;
+      return {
+        channel: byKey.get(k),
+        now: cur ? { t: cur.t, s: cur.s, e: cur.e } : null,
+        next: next ? { t: next.t, s: next.s } : null,
+      };
+    }),
+  };
+}
+
 export async function search(userId, query) {
   await ensureLoaded(userId);
   const q = normalize(query);

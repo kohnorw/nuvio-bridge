@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=109';
+import * as platform from './platform.js?v=110';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -824,15 +824,15 @@ function playLink(params) {
   return platform.playLink(`/api/iptv/play?${q}`, { format: 'json' });
 }
 
-async function fullscreen(ch, catchup = null) {
+async function fullscreen(ch, catchup = null, onNow = null) {
   const now = Date.now();
-  const p = catchup || programsOf(ch.key).find((x) => now >= x.s && now < x.e);
+  const p = catchup || onNow || programsOf(ch.key).find((x) => now >= x.s && now < x.e);
   const params = { key: ch.key, title: p ? marks(p.t).title : '' };
   if (catchup) { params.start = String(catchup.s); params.stop = String(catchup.e); }
   stopPreview();
   st.playingKey = ch.key;
-  if (!st.data.recent.includes(ch.key)) st.data.recent.unshift(ch.key);
-  renderRows(true);
+  if (st.data && !st.data.recent.includes(ch.key)) st.data.recent.unshift(ch.key);
+  if (st.data && st.visible) renderRows(true);
   if (platform.resolve() !== 'browser') {
     location.href = playLink(params).replace(/([?&])format=json&?/, '$1');
     return;
@@ -1243,4 +1243,44 @@ function form(title, fields, toggles, onSave) {
   menu.hidden = false;
   $('#ltv-menu-backdrop').hidden = false;
   setTimeout(() => f.querySelector('input')?.focus(), 30);
+}
+
+
+// --------------------------------------------------------------- home row
+
+// Your Live TV favorites on the home screen, first, like the TV app's Live
+// TV row: a card per channel with its logo, what's on and how far in, and
+// the channel. A click plays it.
+export async function homeRow(ctx) {
+  st.ctx ||= ctx;
+  let data;
+  try { data = await ctx.api('/api/iptv/home'); } catch { return null; }
+  if (!data.entries?.length) return null;
+  const section = document.createElement('section');
+  section.className = 'row ltv-home-row';
+  section.innerHTML = `<div class="row-head"><h2 class="row-title"><span class="ltv-home-dot"></span>${esc(data.title)}</h2>
+      <button class="row-source" aria-label="Open the guide"><svg viewBox="0 0 24 24"><path d="M9 5.5 15.5 12 9 18.5 7.6 17.1 12.7 12 7.6 6.9z"/></svg></button></div>
+    <div class="rail-wrap"><div class="rail ltv-home-rail"></div></div>`;
+  section.querySelector('.row-head').addEventListener('click', () => ctx.openGuide());
+  const rail = section.querySelector('.rail');
+  const now = Date.now();
+  for (const e of data.entries) {
+    const ch = e.channel;
+    const card = document.createElement('button');
+    card.className = 'ltv-home-card';
+    const sub = [`${ch.number}  ${ch.name}`, e.now && minutesLeft(e.now.e, now)].filter(Boolean).join(' · ');
+    card.innerHTML = `${logoHtml(ch, 'ltv-home-logo')}
+      <span class="ltv-home-text">
+        <b>${esc(e.now ? marks(e.now.t).title : ch.name)}</b>
+        ${e.now ? `<span class="ltv-home-bar"><span style="width:${Math.min(100, ((now - e.now.s) / Math.max(1, e.now.e - e.now.s)) * 100)}%"></span></span>` : ''}
+        <small>${esc(sub)}</small>
+      </span>`;
+    card.title = e.next ? `Next: ${clock(e.next.s)} ${e.next.t}` : '';
+    card.addEventListener('click', () => {
+      st.byKey.set(ch.key, ch);
+      fullscreen(ch, null, e.now);
+    });
+    rail.append(card);
+  }
+  return section;
 }

@@ -1,6 +1,6 @@
-import * as platform from './platform.js?v=109';
-import * as player from './player.js?v=109';
-import * as livetv from './livetv.js?v=109';
+import * as platform from './platform.js?v=110';
+import * as player from './player.js?v=110';
+import * as livetv from './livetv.js?v=110';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -246,6 +246,7 @@ function goto(tab) {
   window.scrollTo(0, 0);
 
   if (tab === 'Home' && !state.homeLoaded) loadHome();
+  else if (tab === 'Home') refreshLiveTvRow();
   if (tab === 'Library' && !state.libraryLoaded) loadLibrary();
   if (tab === 'Search') $('#search-form input').focus();
 }
@@ -270,6 +271,11 @@ async function loadHome() {
     rows.innerHTML = '';
 
     renderHero(data.hero);
+    // Live TV favorites lead the home screen, as in the TV app.
+    const liveRow = document.createElement('div');
+    liveRow.id = 'home-livetv';
+    rows.append(liveRow);
+    refreshLiveTvRow();
     if (watching.length) rows.append(renderContinueRow(watching));
     lastRowJson = JSON.stringify(watching.map((e) => [e.id, Math.round(e.position || 0), e.updatedAt]));
 
@@ -280,10 +286,15 @@ async function loadHome() {
     for (const row of data.rows) rows.append(renderRow(row, row.items));
 
     if (!data.rows.length && !(data.collections || []).length) {
-      rows.innerHTML = '<p class="empty">No addons returned anything. Check that this profile has addons installed in Nuvio.</p>';
+      rows.insertAdjacentHTML('beforeend', '<p class="empty">No addons returned anything. Check that this profile has addons installed in Nuvio.</p>');
     }
   } catch (err) {
     rows.innerHTML = `<p class="empty">${err.message}</p>`;
+    // Live TV doesn't depend on the addons: its row still leads.
+    const liveRow = document.createElement('div');
+    liveRow.id = 'home-livetv';
+    rows.prepend(liveRow);
+    refreshLiveTvRow();
   }
 }
 
@@ -1425,9 +1436,18 @@ async function playWatch(link, message) {
 // ------------------------------------------------------------ live TV
 
 let liveTvReady = false;
+async function refreshLiveTvRow() {
+  const slot = $('#home-livetv');
+  if (!slot) return;
+  const section = await livetv.homeRow(liveTvCtx());
+  slot.replaceChildren(...(section ? [section] : []));
+}
+// What's on moves along: the row is redrawn every minute while Home shows.
+setInterval(() => { if (!$('#tab-home')?.hidden && !document.hidden) refreshLiveTvRow(); }, 60_000);
 function liveTvCtx() {
   return {
     api, post, toast, playWatch,
+    openGuide: () => goto('LiveTV'),
     transcode: () => Boolean(state.session?.transcode),
     openSettings: () => { goto('Settings'); setTimeout(() => $('#settings-livetv')?.scrollIntoView({ block: 'start' }), 80); },
   };
