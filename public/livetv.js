@@ -18,7 +18,7 @@
 // The data lives on the server (src/iptv.js), shared by every device on the
 // account. Playlists and guides refresh there every three hours.
 
-import * as platform from './platform.js?v=108';
+import * as platform from './platform.js?v=109';
 
 const $ = (s, root = document) => root.querySelector(s);
 const SLOT = 30 * 60_000;
@@ -677,6 +677,12 @@ function bindGrid() {
     const again = sameRow && st.lastClick.key === target && Date.now() - st.lastClick.at < 4000;
     st.lastClick = { key: target, at: Date.now() };
     renderRows(true); renderHeader();
+    // Preview off (or not possible here): one click on a channel, or on
+    // what's on now, opens it straight away.
+    const previewing = settings().showPreview && st.ctx.transcode();
+    const now = Date.now();
+    const onNow = h.onChannel || (st.block && now >= st.block.s && now < st.block.e);
+    if (!previewing && onNow) { fullscreen(h.ch); return; }
     if (again || h.onChannel) activate(); else maybePreviewOnTap();
   });
 
