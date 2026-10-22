@@ -68,6 +68,8 @@ services:
       # Left unset, the x264 preset is chosen from the core count.
       # TRANSCODE_PRESET: veryfast
 
+      # Live TV: how often each account's playlists and guides are downloaded again.
+      IPTV_REFRESH_HOURS: ${IPTV_REFRESH_HOURS:-3}
       HTTP_TIMEOUT_MS: 15000
       CACHE_TTL_MS: 300000
     volumes:

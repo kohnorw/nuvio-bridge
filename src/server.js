@@ -15,6 +15,7 @@ import * as languages from './languages.js';
 import * as progress from './progress.js';
 import * as vlcLauncher from './vlclauncher.js';
 import * as subsync from './subsync.js';
+import * as iptv from './iptv.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
@@ -643,6 +644,7 @@ async function ensureRecord(req, plan) {
     audioLang: '',
     subLang: '',
     label: title,
+    heading: plan.heading || null,
   });
   await playlists.setRendered(token, playlists.render([
     { url: plan.mediaUrl, title, options: [] },
@@ -1377,6 +1379,7 @@ async function headings(record, user) {
   const videos = new Map((meta?.videos || []).map((v) => [v.id, v]));
 
   return (id) => {
+    if (record.heading) return record.heading;
     if (type === 'series') {
       const ep = episodes.get(id) || videos.get(id);
       const [, season, episode] = String(id || '').split(':');
@@ -1398,6 +1401,76 @@ function episodeTitle(ep) {
   const code = ep.season != null ? `S${ep.season}E${ep.episode}` : null;
   return [ep.show, code, ep.title].filter(Boolean).join(' - ');
 }
+
+
+// ------------------------------------------------------------- live TV
+
+// Xtream Codes logins and M3U playlists, their categories, the guide and
+// catch-up (src/iptv.js). Everything belongs to the Nuvio account, so each
+// device signed in to it sees the same playlists, favourites and settings.
+function iptvRoute(handler) {
+  return async (req, res, next) => {
+    try {
+      const out = await handler(req, res);
+      if (out !== undefined && !res.headersSent) res.json(out);
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      return next(err);
+    }
+  };
+}
+
+app.get('/api/iptv/sources', requireUser, iptvRoute((req) => iptv.overview(req.user.userId)));
+app.post('/api/iptv/xtream', requireUser, iptvRoute((req) => ({ id: iptv.addXtream(req.user.userId, req.body || {}) })));
+app.post('/api/iptv/m3u', requireUser, iptvRoute((req) => ({ id: iptv.addM3u(req.user.userId, req.body || {}) })));
+app.post('/api/iptv/sources/:id', requireUser, iptvRoute((req) => { iptv.updateSource(req.user.userId, req.params.id, req.body || {}); return { ok: true }; }));
+app.post('/api/iptv/sources/:id/move', requireUser, iptvRoute((req) => { iptv.moveSource(req.user.userId, req.params.id, Number(req.body?.delta) || 0); return { ok: true }; }));
+app.delete('/api/iptv/sources/:id', requireUser, iptvRoute((req) => { iptv.removeSource(req.user.userId, req.params.id); return { ok: true }; }));
+app.post('/api/iptv/epgs', requireUser, iptvRoute((req) => ({ id: iptv.addEpg(req.user.userId, req.body || {}) })));
+app.post('/api/iptv/epgs/:id', requireUser, iptvRoute((req) => { iptv.updateEpg(req.user.userId, req.params.id, req.body || {}); return { ok: true }; }));
+app.delete('/api/iptv/epgs/:id', requireUser, iptvRoute((req) => { iptv.removeEpg(req.user.userId, req.params.id); return { ok: true }; }));
+app.post('/api/iptv/settings', requireUser, iptvRoute((req) => ({ settings: iptv.saveSettings(req.user.userId, req.body || {}) })));
+app.post('/api/iptv/refresh', requireUser, iptvRoute((req) => { iptv.refresh(req.user.userId).catch(() => {}); return { ok: true }; }));
+app.get('/api/iptv/channels', requireUser, iptvRoute((req) => iptv.channels(req.user.userId)));
+app.post('/api/iptv/guide', requireUser, iptvRoute(async (req) => {
+  const { keys, from, to } = req.body || {};
+  return { programs: await iptv.guide(req.user.userId, Array.isArray(keys) ? keys : [], Number(from) || 0, Number(to) || Date.now() + 86400_000) };
+}));
+app.post('/api/iptv/archive', requireUser, iptvRoute(async (req) => ({ updated: await iptv.archive(req.user.userId, Array.isArray(req.body?.keys) ? req.body.keys : []) })));
+app.get('/api/iptv/search', requireUser, iptvRoute((req) => iptv.search(req.user.userId, String(req.query.q || ''))));
+app.post('/api/iptv/favorite', requireUser, iptvRoute((req) => ({ favorite: iptv.toggleFavorite(req.user.userId, String(req.body?.key || '')) })));
+app.post('/api/iptv/favorite/move', requireUser, iptvRoute((req) => { iptv.moveFavorite(req.user.userId, String(req.body?.key || ''), Number(req.body?.delta) || 0); return { ok: true }; }));
+app.post('/api/iptv/hidden', requireUser, iptvRoute((req) => { iptv.setHidden(req.user.userId, req.body || {}); return { ok: true }; }));
+app.post('/api/iptv/collapsed', requireUser, iptvRoute((req) => { iptv.setCollapsed(req.user.userId, String(req.body?.sourceId || ''), Boolean(req.body?.collapsed)); return { ok: true }; }));
+
+// Play a channel live, or (with start/stop) a show from its catch-up archive.
+// Handed to the same player as everything else: in the page, or VLC.
+app.get('/api/iptv/play', requireUser, async (req, res, next) => {
+  try {
+    const key = String(req.query.key || '');
+    const start = Number(req.query.start) || 0;
+    const stop = Number(req.query.stop) || 0;
+    const got = await iptv.playable(req.user.userId, key, { start, stop, clientTimezone: String(req.query.tz || '') });
+    const title = String(req.query.title || '').slice(0, 200);
+    const channelName = got.channel.name;
+    return deliver(req, res, {
+      mediaUrl: got.url,
+      // A live channel plays as live TV (joins at "now", no timeline); a
+      // replay is a recording with a seek bar.
+      type: got.live ? 'tv' : 'movie',
+      id: null,
+      title: title ? `${channelName} · ${title}` : channelName,
+      filename: `${channelName}.ts`,
+      heading: { title: got.live ? channelName : (title || channelName), detail: got.live ? (title || 'Live') : `${channelName} · Catch-up` },
+    });
+  } catch (err) {
+    if (err.status) {
+      if (req.query.format === 'json') return res.status(err.status).json({ error: err.message });
+      return res.status(err.status).send(noStreamPage(originOf(req), err.message));
+    }
+    return next(err);
+  }
+});
 
 // ------------------------------------------------------- browser player
 
@@ -1972,6 +2045,7 @@ app.use((err, req, res, _next) => {
 
 await store.init();
 await playlists.init();
+await iptv.init();
 
 if (await transcode.detect()) {
   console.log(`ffmpeg found — converting for the browser with ${transcode.acceleration().label}`);

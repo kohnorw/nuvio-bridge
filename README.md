@@ -62,6 +62,29 @@ works but the return trip doesn't.
 
 ---
 
+## Live TV
+
+**Live TV** in the sidebar is the guide from NuvioPlusIPTV: the info panel
+and preview at the top, the group list (Favorites, Recently watched, All
+channels and each provider category, with counts), and a two-hour grid with
+the now line.
+
+Add a provider under **Settings → Live TV**: an Xtream Codes login (server,
+username, password — its guide comes with it), an M3U playlist, or extra
+XMLTV guides. Everything is stored on the server per Nuvio account and
+encrypted, so every device you sign in on sees the same channels,
+favourites and settings. Playlists and guides refresh on the server every
+3 hours (`IPTV_REFRESH_HOURS`).
+
+- **OK / click** on a channel previews it; again goes full screen.
+- **Catch-up**: on a channel with an archive, a show that has aired plays
+  from the archive (Xtream `/timeshift/` in the server's time zone, HLS
+  first then TS, with the same fallbacks as the app). *Watch from start*
+  restarts the show on now.
+- Keys: arrows move, Left at "now" opens the groups, `M` the channel menu,
+  `I` show info, `F` favourite, `G` groups, `/` search. Right-click or
+  long-press opens the menu on touch.
+
 ## Players, per platform
 
 There is no one mechanism that works everywhere, so the app picks per device

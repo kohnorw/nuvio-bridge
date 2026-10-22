@@ -1,5 +1,6 @@
-import * as platform from './platform.js?v=105';
-import * as player from './player.js?v=105';
+import * as platform from './platform.js?v=106';
+import * as player from './player.js?v=106';
+import * as livetv from './livetv.js?v=106';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -238,6 +239,9 @@ function paintProfile(profile) {
 
 function goto(tab) {
   $$('.tab').forEach((el) => { el.hidden = el.dataset.tab !== tab; });
+  initLiveTv();
+  if (tab === 'LiveTV') livetv.show(); else livetv.hide();
+  if (tab === 'Settings') livetv.renderSettings(liveTvCtx());
   $$('.tab-item').forEach((el) => el.setAttribute('aria-selected', String(el.dataset.goto === tab)));
   window.scrollTo(0, 0);
 
@@ -1387,16 +1391,21 @@ window.addEventListener('pageshow', (event) => {
 setInterval(() => { if (homeVisible()) refreshContinueRow({ wait: 0 }); }, CONTINUE_POLL_MS);
 let skipNextPop = false;
 
-async function openInPage(type, id) {
+function openInPage(type, id) {
+  return playWatch(platform.playLink(
+    `/play/auto/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, { format: 'json' },
+  ));
+}
+
+// Asks the server for a /watch link (as JSON) and opens the player in the
+// page with it. Shared by titles and Live TV.
+async function playWatch(link, message) {
   player.unlock();          // must run inside the tap, before any await
   player.init();
-  player.opening();
+  player.opening(message);
   inPagePlayer = true;
 
   try {
-    const link = platform.playLink(
-      `/play/auto/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, { format: 'json' },
-    );
     const res = await fetch(link, { credentials: 'same-origin', headers: { accept: 'application/json' } });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.watch) throw new Error(data.error || 'No playable stream for this one.');
@@ -1411,6 +1420,22 @@ async function openInPage(type, id) {
     player.unmount();
     toast(err.message, 4000);
   }
+}
+
+// ------------------------------------------------------------ live TV
+
+let liveTvReady = false;
+function liveTvCtx() {
+  return {
+    api, post, toast, playWatch,
+    transcode: () => Boolean(state.session?.transcode),
+    openSettings: () => { goto('Settings'); setTimeout(() => $('#settings-livetv')?.scrollIntoView({ block: 'start' }), 80); },
+  };
+}
+function initLiveTv() {
+  if (liveTvReady) return;
+  liveTvReady = true;
+  livetv.init(liveTvCtx());
 }
 
 // Leaving from the player's own back button: take its history entry off.

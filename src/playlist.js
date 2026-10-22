@@ -50,7 +50,7 @@ function prune() {
 }
 
 export async function create({
-  sid, type, seriesId, episodes, quality, audioLang, subLang, subsOff = false, firstStream, label,
+  sid, type, seriesId, episodes, quality, audioLang, subLang, subsOff = false, firstStream, label, heading = null,
 }) {
   await ready();
   prune();
@@ -67,6 +67,7 @@ export async function create({
     subsOff,           // Settings → Subtitles off: VLC shows none, not even the file's default
     firstStream,       // a hand-picked stream for episode one, if there was one
     label,             // what to call this in a player's title bar
+    heading,           // { title, detail } for the player, when the caller knows better (Live TV)
     rendered: null,
     report: null,
     createdAt: Date.now(),
