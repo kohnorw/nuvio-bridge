@@ -97,6 +97,11 @@ export async function signIn(email, password) {
   return shapeSession(session);
 }
 
+/** The account an access token belongs to (checks the token with the backend). */
+export async function getUser(accessToken) {
+  return request('/auth/v1/user', { accessToken });
+}
+
 export async function signUp(email, password) {
   const result = await request('/auth/v1/signup', {
     method: 'POST',

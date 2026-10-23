@@ -45,6 +45,31 @@ function requireUser(req, res, next) {
   next();
 }
 
+// The Android TV app (NuvioPlusIPTV) signs in to Nuvio itself, so for Live TV
+// it sends its own access token instead of a bridge cookie. The token is only
+// checked, never stored or refreshed: refreshing it here would rotate the
+// app's refresh token and sign the TV out.
+const bearerUsers = new Map(); // token -> { userId, until }
+async function requireIptvUser(req, res, next) {
+  const user = currentUser(req);
+  if (user) { req.user = user; return next(); }
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '');
+  if (!m) return res.status(401).json({ error: 'Sign in to your Nuvio account.' });
+  const token = m[1].trim();
+  const hit = bearerUsers.get(token);
+  if (hit && hit.until > Date.now()) { req.user = { userId: hit.userId }; return next(); }
+  try {
+    const u = await nuvio.getUser(token);
+    if (!u?.id) throw new Error('no user');
+    if (bearerUsers.size > 500) bearerUsers.clear();
+    bearerUsers.set(token, { userId: u.id, until: Date.now() + 5 * 60_000 });
+    req.user = { userId: u.id };
+    next();
+  } catch {
+    res.status(401).json({ error: 'Sign in to your Nuvio account.' });
+  }
+}
+
 // Supabase access tokens last an hour; refresh a minute early so a request
 // doesn't fail and need retrying.
 //
@@ -1443,16 +1468,16 @@ app.get('/api/iptv/logo', async (req, res) => {
   res.setHeader('cache-control', 'public, max-age=604800, immutable');
   return res.end(got.body);
 });
-app.get('/api/iptv/home', requireUser, iptvRoute((req) => iptv.homeRow(req.user.userId)));
-app.get('/api/iptv/channels', requireUser, iptvRoute((req) => iptv.channels(req.user.userId)));
+app.get('/api/iptv/home', requireIptvUser, iptvRoute((req) => iptv.homeRow(req.user.userId)));
+app.get('/api/iptv/channels', requireIptvUser, iptvRoute((req) => iptv.channels(req.user.userId)));
 app.post('/api/iptv/guide', requireUser, iptvRoute(async (req) => {
   const { keys, from, to } = req.body || {};
   return { programs: await iptv.guide(req.user.userId, Array.isArray(keys) ? keys : [], Number(from) || 0, Number(to) || Date.now() + 86400_000) };
 }));
 app.post('/api/iptv/archive', requireUser, iptvRoute(async (req) => ({ updated: await iptv.archive(req.user.userId, Array.isArray(req.body?.keys) ? req.body.keys : []) })));
-app.get('/api/iptv/search', requireUser, iptvRoute((req) => iptv.search(req.user.userId, String(req.query.q || ''))));
-app.post('/api/iptv/favorite', requireUser, iptvRoute((req) => ({ favorite: iptv.toggleFavorite(req.user.userId, String(req.body?.key || '')) })));
-app.post('/api/iptv/favorite/move', requireUser, iptvRoute((req) => { iptv.moveFavorite(req.user.userId, String(req.body?.key || ''), Number(req.body?.delta) || 0); return { ok: true }; }));
+app.get('/api/iptv/search', requireIptvUser, iptvRoute((req) => iptv.search(req.user.userId, String(req.query.q || ''))));
+app.post('/api/iptv/favorite', requireIptvUser, iptvRoute((req) => ({ favorite: iptv.toggleFavorite(req.user.userId, String(req.body?.key || '')) })));
+app.post('/api/iptv/favorite/move', requireIptvUser, iptvRoute((req) => { iptv.moveFavorite(req.user.userId, String(req.body?.key || ''), Number(req.body?.delta) || 0); return { ok: true }; }));
 app.post('/api/iptv/hidden', requireUser, iptvRoute((req) => { iptv.setHidden(req.user.userId, req.body || {}); return { ok: true }; }));
 app.post('/api/iptv/collapsed', requireUser, iptvRoute((req) => { iptv.setCollapsed(req.user.userId, String(req.body?.sourceId || ''), Boolean(req.body?.collapsed)); return { ok: true }; }));
 
