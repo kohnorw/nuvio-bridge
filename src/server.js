@@ -1446,12 +1446,13 @@ function iptvRoute(handler) {
   };
 }
 
+app.get('/api/iptv/sources/export', requireIptvUser, iptvRoute((req) => iptv.exportSources(req.user.userId)));
 app.get('/api/iptv/sources', requireUser, iptvRoute((req) => iptv.overview(req.user.userId)));
-app.post('/api/iptv/xtream', requireUser, iptvRoute((req) => ({ id: iptv.addXtream(req.user.userId, req.body || {}) })));
-app.post('/api/iptv/m3u', requireUser, iptvRoute((req) => ({ id: iptv.addM3u(req.user.userId, req.body || {}) })));
-app.post('/api/iptv/sources/:id', requireUser, iptvRoute((req) => { iptv.updateSource(req.user.userId, req.params.id, req.body || {}); return { ok: true }; }));
+app.post('/api/iptv/xtream', requireIptvUser, iptvRoute((req) => ({ id: iptv.addXtream(req.user.userId, req.body || {}) })));
+app.post('/api/iptv/m3u', requireIptvUser, iptvRoute((req) => ({ id: iptv.addM3u(req.user.userId, req.body || {}) })));
+app.post('/api/iptv/sources/:id', requireIptvUser, iptvRoute((req) => { iptv.updateSource(req.user.userId, req.params.id, req.body || {}); return { ok: true }; }));
 app.post('/api/iptv/sources/:id/move', requireUser, iptvRoute((req) => { iptv.moveSource(req.user.userId, req.params.id, Number(req.body?.delta) || 0); return { ok: true }; }));
-app.delete('/api/iptv/sources/:id', requireUser, iptvRoute((req) => { iptv.removeSource(req.user.userId, req.params.id); return { ok: true }; }));
+app.delete('/api/iptv/sources/:id', requireIptvUser, iptvRoute((req) => { iptv.removeSource(req.user.userId, req.params.id); return { ok: true }; }));
 app.post('/api/iptv/epgs', requireUser, iptvRoute((req) => ({ id: iptv.addEpg(req.user.userId, req.body || {}) })));
 app.post('/api/iptv/epgs/:id', requireUser, iptvRoute((req) => { iptv.updateEpg(req.user.userId, req.params.id, req.body || {}); return { ok: true }; }));
 app.delete('/api/iptv/epgs/:id', requireUser, iptvRoute((req) => { iptv.removeEpg(req.user.userId, req.params.id); return { ok: true }; }));

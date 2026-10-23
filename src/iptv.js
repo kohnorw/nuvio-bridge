@@ -170,6 +170,23 @@ function publicSource(s, accounts) {
   };
 }
 
+/**
+ * Playlist logins with their passwords, for the Android TV app's sync (it
+ * already signed in as this account). Never sent to the web pages.
+ */
+export function exportSources(userId) {
+  return {
+    sources: record(userId).sources.map((s) => ({
+      id: s.id, kind: s.kind, name: s.name, enabled: s.enabled !== false,
+      server: s.kind === 'xtream' ? s.server : undefined,
+      username: s.kind === 'xtream' ? s.username : undefined,
+      password: s.kind === 'xtream' ? s.password : undefined,
+      url: s.kind === 'm3u' ? s.url : undefined,
+      userAgent: s.userAgent || '',
+    })),
+  };
+}
+
 export function overview(userId) {
   const rec = record(userId);
   const state = rt(userId);
