@@ -322,6 +322,17 @@ export function toggleFavorite(userId, key) {
   return i < 0;
 }
 
+/** Puts favorites in the given order (the TV app's sync). Ones not listed keep their place at the end. */
+export function setFavoriteOrder(userId, keys) {
+  const rec = record(userId);
+  const want = (Array.isArray(keys) ? keys : []).map(String);
+  const have = new Set(rec.favorites);
+  const ordered = want.filter((k, i) => have.has(k) && want.indexOf(k) === i);
+  const rest = rec.favorites.filter((k) => !ordered.includes(k));
+  rec.favorites = [...ordered, ...rest];
+  persistSoon();
+}
+
 export function moveFavorite(userId, key, delta) {
   const list = record(userId).favorites;
   const i = list.indexOf(key);

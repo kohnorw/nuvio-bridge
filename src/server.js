@@ -1478,6 +1478,7 @@ app.post('/api/iptv/guide', requireUser, iptvRoute(async (req) => {
 app.post('/api/iptv/archive', requireUser, iptvRoute(async (req) => ({ updated: await iptv.archive(req.user.userId, Array.isArray(req.body?.keys) ? req.body.keys : []) })));
 app.get('/api/iptv/search', requireIptvUser, iptvRoute((req) => iptv.search(req.user.userId, String(req.query.q || ''))));
 app.post('/api/iptv/favorite', requireIptvUser, iptvRoute((req) => ({ favorite: iptv.toggleFavorite(req.user.userId, String(req.body?.key || '')) })));
+app.post('/api/iptv/favorite/order', requireIptvUser, iptvRoute((req) => { iptv.setFavoriteOrder(req.user.userId, req.body?.keys); return { ok: true }; }));
 app.post('/api/iptv/favorite/move', requireIptvUser, iptvRoute((req) => { iptv.moveFavorite(req.user.userId, String(req.body?.key || ''), Number(req.body?.delta) || 0); return { ok: true }; }));
 app.post('/api/iptv/hidden', requireUser, iptvRoute((req) => { iptv.setHidden(req.user.userId, req.body || {}); return { ok: true }; }));
 app.post('/api/iptv/collapsed', requireUser, iptvRoute((req) => { iptv.setCollapsed(req.user.userId, String(req.body?.sourceId || ''), Boolean(req.body?.collapsed)); return { ok: true }; }));
