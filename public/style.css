@@ -1848,7 +1848,7 @@ body.watching { overflow: hidden; }
 .watch-menu-item { flex-direction: column; align-items: flex-start; gap: 2px; }
 .watch-menu-item:disabled { opacity: 0.4; cursor: default; }
 .watch-menu-label { display: block; }
-.watch-menu-detail { display: block; font-size: 12px; line-height: 16px; font-weight: 400; color: rgb(255 255 255 / 0.6); }
+.watch-menu-detail { display: block; font-size: 12px; line-height: 16px; font-weight: 400; white-space: pre-line; color: rgb(255 255 255 / 0.6); }
 .watch-menu-empty { margin: 10px 12px; font-size: 14px; color: rgb(255 255 255 / 0.7); }
 #watch-options-btn.is-on::after {
   content: ""; position: absolute; right: 9px; top: 9px;

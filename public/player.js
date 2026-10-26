@@ -1036,8 +1036,14 @@ async function loadSources(gen) {
   list.forEach((stream, i) => {
     const el = option(String(i), stream.headline || stream.label || `Source ${i + 1}`);
     const usable = stream.playable && stream.url;
-    el.dataset.detail = [stream.addon, ...(stream.badges || []), usable ? null : 'needs debrid']
-      .filter(Boolean).join(' · ');
+    // Three lines: what the picture is, what it sounds like, what language.
+    const size = (stream.badges || []).find((b) => /\d\s(GB|MB)$/.test(b));
+    const quality = stream.quality || (stream.badges || []).filter((b) => b !== size);
+    el.dataset.detail = [
+      [stream.addon, ...quality, size, usable ? null : 'needs debrid'].filter(Boolean).join(' · '),
+      `🔊 ${(stream.audio || []).join(' · ') || 'Audio unknown'}`,
+      `🌐 ${(stream.languages || []).join(' · ') || 'Language unknown'}`,
+    ].join('\n');
     el.disabled = !usable;
     if (usable && stream.url === item.url && chosen === null) chosen = String(i);
     select.append(el);
