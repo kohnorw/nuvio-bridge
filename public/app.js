@@ -1,6 +1,6 @@
-import * as platform from './platform.js?v=115';
-import * as player from './player.js?v=115';
-import * as livetv from './livetv.js?v=115';
+import * as platform from './platform.js?v=118';
+import * as player from './player.js?v=118';
+import * as livetv from './livetv.js?v=118';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
