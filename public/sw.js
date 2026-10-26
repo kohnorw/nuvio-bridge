@@ -9,7 +9,7 @@
 // single-use as often as not — a cached one is a link that has already been
 // spent.
 
-const CACHE = 'nuvio-shell-v115';
+const CACHE = 'nuvio-shell-v116';
 
 const SHELL = [
   '/',

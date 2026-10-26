@@ -557,6 +557,10 @@ export function normalizeStream(s, addonName) {
     headline: headline || detail.slice(0, 60) || 'Stream',
     detail,
     badges: badgesFor(label),
+    // Structured, for the stream list: what the picture is, what it sounds
+    // like, and what language it's in — each its own row rather than mixed
+    // into one run of chips.
+    ...describeStream(`${label} ${filename || ''}`),
     label: label || 'Untitled stream',
     url,
     externalUrl: s.externalUrl || null,
@@ -604,6 +608,110 @@ export function browserVerdict(text, url) {
   if (goodContainer) return 'yes';
   if (goodVideo) return 'maybe';
   return 'maybe';
+}
+
+// ------------------------------------------------------ stream description
+//
+// Quality, audio and language read from the release name and the addon's own
+// text. Addons format these very differently (Torrentio uses flag emoji,
+// MediaFusion spells languages out, AIOStreams uses icons), so each is matched
+// several ways. All of it is best effort: a missing field means nothing in the
+// name said, not that the file lacks it.
+
+const FLAG_LANG = {
+  '🇬🇧': 'English', '🇺🇸': 'English', '🇪🇸': 'Spanish', '🇲🇽': 'Latino', '🇫🇷': 'French',
+  '🇩🇪': 'German', '🇮🇹': 'Italian', '🇵🇹': 'Portuguese', '🇧🇷': 'Portuguese (BR)',
+  '🇳🇱': 'Dutch', '🇵🇱': 'Polish', '🇷🇺': 'Russian', '🇺🇦': 'Ukrainian', '🇯🇵': 'Japanese',
+  '🇰🇷': 'Korean', '🇨🇳': 'Chinese', '🇹🇼': 'Chinese', '🇮🇳': 'Hindi', '🇸🇦': 'Arabic',
+  '🇹🇷': 'Turkish', '🇸🇪': 'Swedish', '🇩🇰': 'Danish', '🇳🇴': 'Norwegian', '🇫🇮': 'Finnish',
+  '🇨🇿': 'Czech', '🇬🇷': 'Greek', '🇮🇱': 'Hebrew', '🇹🇭': 'Thai', '🇻🇳': 'Vietnamese',
+  '🇭🇺': 'Hungarian', '🇷🇴': 'Romanian', '🇮🇩': 'Indonesian',
+};
+
+// Full words and scene tags only — two-letter codes like "it" or "de" turn up
+// in ordinary titles far too often to trust.
+const WORD_LANG = [
+  ['English', /\b(english|eng)\b/i],
+  ['Spanish', /\b(spanish|espa[nñ]ol|castellano|spa)\b/i],
+  ['Latino', /\blatino\b/i],
+  ['French', /\b(french|fran[cç]ais|truefrench|vff|vfq|vf2?|fre)\b/i],
+  ['German', /\b(german|deutsch|ger)\b/i],
+  ['Italian', /\b(italian|italiano|ita)\b/i],
+  ['Portuguese', /\b(portuguese|portugu[eê]s|dublado|por)\b/i],
+  ['Dutch', /\b(dutch|nederlands)\b/i],
+  ['Polish', /\b(polish|polski|lektor|pldub)\b/i],
+  ['Russian', /\b(russian|rus)\b/i],
+  ['Ukrainian', /\b(ukrainian|ukr)\b/i],
+  ['Japanese', /\b(japanese|jpn|jap)\b/i],
+  ['Korean', /\b(korean|kor)\b/i],
+  ['Chinese', /\b(chinese|mandarin|cantonese|chs|cht)\b/i],
+  ['Hindi', /\b(hindi|hin)\b/i],
+  ['Tamil', /\btamil\b/i],
+  ['Telugu', /\btelugu\b/i],
+  ['Arabic', /\barabic\b/i],
+  ['Turkish', /\b(turkish|t[uü]rk[cç]e)\b/i],
+  ['Swedish', /\bswedish\b/i],
+  ['Danish', /\bdanish\b/i],
+  ['Norwegian', /\bnorwegian\b/i],
+  ['Finnish', /\bfinnish\b/i],
+  ['Czech', /\bczech\b/i],
+  ['Greek', /\bgreek\b/i],
+  ['Hebrew', /\bhebrew\b/i],
+  ['Thai', /\bthai\b/i],
+  ['Vietnamese', /\bvietnamese\b/i],
+  ['Hungarian', /\bhungarian\b/i],
+  ['Romanian', /\bromanian\b/i],
+];
+
+export function describeStream(text) {
+  const t = String(text || '');
+  const lower = t.toLowerCase();
+
+  // Quality: resolution, then source, then HDR flavour.
+  const quality = [];
+  const res = lower.match(/\b(2160p|4k|uhd|1440p|1080p|1080i|720p|576p|480p|360p)\b/);
+  if (res) quality.push({ '4k': '4K', uhd: '4K', '2160p': '4K' }[res[1]] || res[1]);
+  if (/remux/.test(lower)) quality.push('REMUX');
+  else if (/blu-?ray|bdrip|brrip|\bbd\b/.test(lower)) quality.push('BluRay');
+  else if (/web-?dl/.test(lower)) quality.push('WEB-DL');
+  else if (/webrip|web-?rip/.test(lower)) quality.push('WEBRip');
+  else if (/hdtv/.test(lower)) quality.push('HDTV');
+  else if (/dvdrip|\bdvd\b/.test(lower)) quality.push('DVD');
+  else if (/\bcam(rip)?\b|hdcam|telesync|\bhdts\b/.test(lower)) quality.push('CAM');
+  if (/dolby.?vision|\bdovi\b|\bdv\b/.test(lower)) quality.push('DV');
+  if (/hdr10\+|hdr10plus/.test(lower)) quality.push('HDR10+');
+  else if (/\bhdr(10)?\b/.test(lower)) quality.push('HDR');
+  const codec = lower.match(/\b(x265|h\.?265|hevc|x264|h\.?264|avc|av1)\b/);
+  if (codec) quality.push(/265|hevc/.test(codec[1]) ? 'HEVC' : codec[1] === 'av1' ? 'AV1' : 'H.264');
+  if (/\b10.?bit\b/.test(lower)) quality.push('10-bit');
+
+  // Audio: codec, then channel layout.
+  const audio = [];
+  if (/atmos/.test(lower)) audio.push('Atmos');
+  if (/truehd/.test(lower)) audio.push('TrueHD');
+  else if (/dts-?x\b/.test(lower)) audio.push('DTS:X');
+  else if (/dts-?hd(.?ma)?/.test(lower)) audio.push('DTS-HD MA');
+  else if (/\bdts\b/.test(lower)) audio.push('DTS');
+  else if (/\b(ddp|dd\+|e-?ac-?3|eac3)/.test(lower)) audio.push('DD+');
+  else if (/\b(dd|ac-?3|dolby digital)\b/.test(lower)) audio.push('DD');
+  else if (/\bflac\b/.test(lower)) audio.push('FLAC');
+  else if (/\bopus\b/.test(lower)) audio.push('Opus');
+  else if (/\baac\b/.test(lower)) audio.push('AAC');
+  else if (/\bmp3\b/.test(lower)) audio.push('MP3');
+  const ch = lower.match(/(?:^|[^\d.])([2578])[ .]([01])(?![\d])|\b([2-8])ch\b/);
+  if (ch) audio.push(ch[3] ? `${ch[3]}ch` : `${ch[1]}.${ch[2]}`);
+  if (/dual.?audio/.test(lower)) audio.push('Dual audio');
+  else if (/\bmulti(?:-?audio)?\b/.test(lower)) audio.push('Multi audio');
+
+  // Languages: flags first, then words.
+  const languages = [];
+  const add = (l) => { if (!languages.includes(l)) languages.push(l); };
+  for (const [flag, name] of Object.entries(FLAG_LANG)) if (t.includes(flag)) add(name);
+  for (const [name, re] of WORD_LANG) if (re.test(t)) add(name);
+  if (/vostfr/i.test(t)) add('French subs');
+  if (/\bsubbed\b|\bsubs?\b/i.test(t) && !languages.length) add('Subbed');
+
+  return { quality, audio, languages: languages.slice(0, 6) };
 }
 
 function badgesFor(text) {

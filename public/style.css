@@ -579,6 +579,15 @@ button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px
   color: rgb(255 255 255 / 0.92);
 }
 
+.stream-specs { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.spec-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.spec-label {
+  width: 64px; flex: 0 0 64px;
+  font-size: 10px; line-height: 14px; letter-spacing: 0.8px; text-transform: uppercase;
+  color: rgb(255 255 255 / var(--o-muted));
+}
+.badge.unknown { background: transparent; color: rgb(255 255 255 / var(--o-muted)); font-weight: 500; }
+
 .stream-detail {
   display: none;
   margin-top: 8px; padding-top: 8px;

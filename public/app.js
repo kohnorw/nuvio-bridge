@@ -1244,14 +1244,37 @@ function streamRow(s, queued) {
 
   el.querySelector('.stream-name').textContent = s.headline || s.label;
 
+  // Quality, audio and language each get a labelled row so they can be
+  // scanned down the list. Size (from the old badges) rides with quality.
   const badges = el.querySelector('.badges');
-  for (const text of s.badges || []) {
-    const chip = document.createElement('span');
-    chip.className = 'badge';
-    chip.textContent = text;
-    badges.append(chip);
+  badges.className = 'stream-specs';
+  const size = (s.badges || []).find((b) => /\d\s(GB|MB)$/.test(b));
+  const rows = [
+    ['Quality', [...(s.quality || (s.badges || []).filter((b) => b !== size)), size].filter(Boolean)],
+    ['Audio', s.audio || []],
+    ['Language', s.languages || []],
+  ];
+  for (const [label, values] of rows) {
+    const row = document.createElement('div');
+    row.className = 'spec-row';
+    const name = document.createElement('span');
+    name.className = 'spec-label';
+    name.textContent = label;
+    row.append(name);
+    if (!values.length) {
+      const chip = document.createElement('span');
+      chip.className = 'badge unknown';
+      chip.textContent = 'Unknown';
+      row.append(chip);
+    }
+    for (const text of values) {
+      const chip = document.createElement('span');
+      chip.className = 'badge';
+      chip.textContent = text;
+      row.append(chip);
+    }
+    badges.append(row);
   }
-  if (!badges.childElementCount) badges.remove();
 
   el.querySelector('.from').textContent = s.playable ? s.addon : `${s.addon} — needs debrid`;
 
