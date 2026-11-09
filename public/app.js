@@ -1,6 +1,6 @@
-import * as platform from './platform.js?v=119';
-import * as player from './player.js?v=119';
-import * as livetv from './livetv.js?v=119';
+import * as platform from './platform.js?v=120';
+import * as player from './player.js?v=120';
+import * as livetv from './livetv.js?v=120';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -191,9 +191,7 @@ async function showProfiles() {
     const card = document.createElement('button');
     card.className = 'profile-card';
     card.innerHTML = `<span class="avatar"></span><span class="profile-name"></span>`;
-    const avatar = card.querySelector('.avatar');
-    if (p.avatarUrl) avatar.style.backgroundImage = `url("${p.avatarUrl}")`;
-    else { avatar.style.background = p.avatarColor; avatar.textContent = p.name.charAt(0).toUpperCase(); }
+    paintAvatar(card.querySelector('.avatar'), p);
     card.querySelector('.profile-name').textContent = p.name;
     card.addEventListener('click', () => selectProfile(p));
     grid.append(card);
@@ -218,19 +216,27 @@ async function selectProfile(profile) {
   goto('Home');
 }
 
+// The picture on the profile's colour, as the app draws it (many of Nuvio's
+// avatars are transparent). A picture that won't load leaves the initial.
+function paintAvatar(element, profile) {
+  element.textContent = '';
+  element.style.backgroundColor = profile.avatarColor || '#1E88E5';
+  const showInitial = () => { element.textContent = (profile.name || '?').charAt(0).toUpperCase(); };
+  if (!profile.avatarUrl) { showInitial(); return; }
+  const image = document.createElement('img');
+  image.alt = '';
+  image.addEventListener('error', () => { image.remove(); showInitial(); }, { once: true });
+  image.src = profile.avatarUrl;
+  element.append(image);
+}
+
 // The avatar and the name, wherever they appear. Shared with boot, which
 // restores a profile that was chosen on an earlier visit and so never goes
 // through selectProfile.
 function paintProfile(profile) {
   if (!profile) return;
 
-  const avatar = $('#tab-avatar');
-  if (profile.avatarUrl) {
-    avatar.style.backgroundImage = `url("${profile.avatarUrl}")`;
-  } else {
-    avatar.style.background = profile.avatarColor || '#1E88E5';
-    avatar.textContent = (profile.name || '?').charAt(0).toUpperCase();
-  }
+  paintAvatar($('#tab-avatar'), profile);
 
   $('#settings-profile').textContent = profile.name || `Profile ${profile.index}`;
 }

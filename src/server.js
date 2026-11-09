@@ -201,7 +201,8 @@ app.get('/api/session', (req, res) => {
 
 app.get('/api/profiles', requireUser, async (req, res, next) => {
   try {
-    res.json(await nuvio.profiles(await accessToken(req.user)));
+    const token = await accessToken(req.user);
+    res.json(await nuvio.withAvatarImages(token, await nuvio.profiles(token)));
   } catch (err) { next(err); }
 });
 

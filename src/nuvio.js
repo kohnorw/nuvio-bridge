@@ -159,10 +159,79 @@ export async function profiles(accessToken) {
       index: p.profile_index ?? 1,
       name: p.name || 'Profile',
       avatarUrl: p.avatar_url || null,
+      avatarId: p.avatar_id || null,
       avatarColor: p.avatar_color_hex || '#1E88E5',
       pinEnabled: Boolean(p.pin_enabled),
     }))
     .sort((a, b) => a.index - b.index);
+}
+
+// Most profiles have no avatar_url: they name a picture from Nuvio's own set by
+// avatar_id, and the catalog says where it is (AvatarRepository.kt). Standard
+// pictures are public; supporter pictures sit in a private bucket and need a
+// signed link. A picture that can't be found just leaves the initial showing.
+const AVATAR_BUCKET = 'avatars';
+const MEMBER_AVATAR_BUCKET = 'membership-profile-avatars';
+const AVATAR_CATALOG_TTL_MS = 15 * 60_000;
+const SIGNED_AVATAR_SECONDS = 24 * 3600;
+let avatarCatalog = null; // { at, paths: Map(id -> storage path) }
+
+const storagePath = (path) => String(path).trim().replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+const isAbsoluteUrl = (path) => /^https?:\/\//i.test(path);
+
+function publicAvatarUrl(path) {
+  return isAbsoluteUrl(path) ? path : `${config.backendUrl}/storage/v1/object/public/${AVATAR_BUCKET}/${storagePath(path)}`;
+}
+
+async function standardAvatarPaths(accessToken) {
+  if (avatarCatalog && Date.now() - avatarCatalog.at < AVATAR_CATALOG_TTL_MS) return avatarCatalog.paths;
+  try {
+    const rows = await request('/rest/v1/rpc/get_avatar_catalog', { method: 'POST', accessToken, body: {} });
+    avatarCatalog = { at: Date.now(), paths: new Map((rows || []).map((a) => [a.id, a.storage_path])) };
+    return avatarCatalog.paths;
+  } catch {
+    // An old catalog beats losing every picture to one failed request.
+    return avatarCatalog?.paths || new Map();
+  }
+}
+
+async function signedMemberAvatarUrl(accessToken, path) {
+  try {
+    const signed = await request(`/storage/v1/object/sign/${MEMBER_AVATAR_BUCKET}/${storagePath(path)}`, {
+      method: 'POST',
+      accessToken,
+      body: { expiresIn: SIGNED_AVATAR_SECONDS },
+    });
+    const link = String(signed?.signedURL || signed?.signedUrl || '');
+    if (!link) return null;
+    if (isAbsoluteUrl(link)) return link;
+    return `${config.backendUrl}${link.startsWith('/storage/v1/') ? '' : '/storage/v1'}${link.startsWith('/') ? '' : '/'}${link}`;
+  } catch {
+    return null;
+  }
+}
+
+export async function withAvatarImages(accessToken, list) {
+  const unresolved = list.filter((p) => !p.avatarUrl && p.avatarId);
+  if (!unresolved.length) return list;
+
+  const standard = await standardAvatarPaths(accessToken);
+  const member = unresolved.some((p) => !standard.has(p.avatarId))
+    ? await request('/rest/v1/rpc/get_member_profile_avatar_catalog', { method: 'POST', accessToken, body: {} })
+      .then((rows) => new Map((rows || []).map((a) => [a.id, a.storage_path])))
+      .catch(() => new Map())
+    : new Map();
+
+  return Promise.all(list.map(async (profile) => {
+    if (profile.avatarUrl || !profile.avatarId) return profile;
+    let avatarUrl = null;
+    if (standard.has(profile.avatarId)) avatarUrl = publicAvatarUrl(standard.get(profile.avatarId));
+    else if (member.has(profile.avatarId)) {
+      const path = member.get(profile.avatarId);
+      avatarUrl = isAbsoluteUrl(path) ? path : await signedMemberAvatarUrl(accessToken, path);
+    }
+    return { ...profile, avatarUrl };
+  }));
 }
 
 export async function addons(accessToken, profileIndex) {
