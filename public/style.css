@@ -831,6 +831,16 @@ button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px
 /* Genre filters sit under the catalog title */
 #catalog-genres { margin: 0 calc(var(--gutter) * -1) 18px; padding: 0 var(--gutter); }
 
+/* A folder's catalogs: "Top 10", "Popular"… with the type underneath */
+#catalog-tabs { margin: 0 calc(var(--gutter) * -1) 18px; padding: 0 var(--gutter); }
+.folder-tab {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 7px 18px; border-radius: 16px; text-align: left;
+}
+.folder-tab-type { font-size: 11px; line-height: 14px; font-weight: 500; opacity: .65; }
+/* The folder's rails run edge to edge like the home screen's */
+#catalog-rows { margin: 0 calc(var(--gutter) * -1); }
+
 /* Row provenance above the banner title — labelMedium: 12/14, +0.8 tracking */
 .hero-source {
   margin: 0 0 8px;

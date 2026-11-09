@@ -266,6 +266,8 @@ Other details that matter:
 
 ### Audio tracks and subtitles
 
+Playback starts on the English track when the file has one (never a
+commentary or audio description); change the default under Settings.
 Every audio track in the file is listed in the player. Switching restarts the
 stream at the same position with the new track mapped.
 
@@ -575,8 +577,10 @@ The gear icon on any title opens a Playback sheet, stored per user:
   has a real queue with working next/previous.
 - **Preferred quality** — Any, 4K, 1080p or 720p. Falls back to the top-ranked
   stream when nothing matches.
-- **Audio / Subtitle language** — floats matching release names up the list
-  (a hint, never a filter), emits `#EXTVLCOPT:audio-language` /
+- **Audio / Subtitle language** — audio defaults to **English**; pick *File
+  default* in Settings to turn that off. Releases naming the language come
+  first, releases naming only other languages last (a hint, never a filter).
+  Emits `#EXTVLCOPT:audio-language` /
   `sub-language` in ISO 639-2/B, and attaches a matching subtitle file with
   `input-slave` if a subtitle addon is installed.
 
@@ -801,8 +805,14 @@ that stray from the simple case:
   requiring some other extra are kept out of home rows but stay browsable.
 - **Addons flagged `configurationRequired`** are dropped rather than queried.
 - **Any type works** — anime, tv, channels, whatever an addon declares.
-- **Row order** comes from `sync_pull_home_catalog_settings`, so disabled
-  catalogs stay hidden and ordering matches the app.
+- **Home order** comes from `sync_pull_home_catalog_settings`: disabled
+  catalogs and collections stay hidden, custom names apply, and collections
+  sit between catalogs where you put them in the app.
+- **Folders open like the app.** Each catalog in a folder is its own tab
+  (or row, if the collection is set to rows), named from the installed
+  addon's manifest and in the addon's own order, with a combined **All** tab
+  when the collection has one. Catalogs that don't support paging don't
+  offer "Load more".
 
 ---
 

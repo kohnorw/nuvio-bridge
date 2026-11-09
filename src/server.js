@@ -185,7 +185,7 @@ app.get('/api/session', (req, res) => {
     backendUrl: nuvio.config.backendUrl,
     profileIndex: user?.profileIndex ?? null,
     theme: user?.theme || 'White',
-    prefs: { ...DEFAULT_PREFS, ...(user?.prefs || {}) },
+    prefs: storedPrefs(user),
     languages: languages.options,
     devices: user ? store.devicesFor(user.userId).length : 0,
     signupAllowed: ALLOW_SIGNUP,
@@ -299,17 +299,20 @@ async function buildHome(user, index) {
     nuvio.collections(token, index).catch(() => []),
   ]);
 
-  const rows = orderCatalogs(addonsApi.catalogList(addons, { home: true }), settings).slice(0, ROW_LIMIT);
+  const layout = arrangeHome(addonsApi.catalogList(addons, { home: true }), userCollections, settings);
 
-  const catalogRows = await Promise.all(rows.map(async (row) => ({
-    ...row,
-    items: await addonsApi.catalog(addons, row).catch(() => []),
-  })));
+  // Only catalogs cost a request each, so only they count towards the limit.
+  let catalogsLeft = ROW_LIMIT;
+  const kept = layout.filter((slot) => slot.collection || (catalogsLeft-- > 0));
+
+  const sections = await Promise.all(kept.map(async (slot) => (slot.collection
+    ? { collection: collectionRow(slot.collection) }
+    : { row: { ...slot.row, items: await addonsApi.catalog(addons, slot.row).catch(() => []) } })));
 
   return {
-    hero: buildHeroPool(catalogRows),
-    collections: collectionRows(userCollections),
-    rows: catalogRows.filter((row) => row.items.length),
+    hero: buildHeroPool(sections.filter((s) => s.row).map((s) => s.row)),
+    // In the app's order, collections and catalogs mixed as the person set them.
+    sections: sections.filter((s) => s.collection?.folders.length || s.row?.items.length),
   };
 }
 
@@ -393,20 +396,51 @@ function shuffle(items, seed) {
 
 const ROW_LIMIT = Number(process.env.HOME_ROW_LIMIT || 10);
 
-// Applies the account's home catalog settings: drop what's disabled, order by
-// what's left. No settings means show everything in install order, which is
-// the app's own fallback.
-function orderCatalogs(catalogs, settings) {
-  if (!settings?.length) return catalogs;
+// Puts home together the way HomeViewModelCatalogPipeline does: pinned
+// collections first, then everything in the saved order, then whatever is
+// newer than the saved order — catalogs in install order, then collections.
+// Anything switched off stays off. A custom name from the app's catalog
+// settings replaces the addon's.
+function arrangeHome(catalogs, collections, settings) {
+  const catalogKey = (addonId, type, catalogId) => `${addonId}|${type}|${catalogId}`;
+  const rules = new Map((settings || []).map((s) => [
+    s.isCollection ? `collection|${s.collectionId}` : catalogKey(s.addonId, s.type, s.catalogId),
+    s,
+  ]));
 
-  const key = (addonId, type, catalogId) => `${addonId}|${type}|${catalogId}`;
-  const rules = new Map(settings.map((s) => [key(s.addonId, s.type, s.catalogId), s]));
+  const slots = [
+    ...catalogs.map((row) => {
+      const rule = rules.get(catalogKey(row.addonId, row.type, row.id));
+      return { row: { ...row, title: rule?.customTitle || rowTitle(row.name, row.type) }, rule };
+    }),
+    ...collections.map((collection) => ({ collection, rule: rules.get(`collection|${collection.id}`) })),
+  ].filter(({ rule }) => !rule || rule.enabled);
 
-  return catalogs
-    .map((c) => ({ catalog: c, rule: rules.get(key(c.addonId, c.type, c.id)) }))
-    .filter(({ rule }) => !rule || rule.enabled)
-    .sort((a, b) => (a.rule?.order ?? 999) - (b.rule?.order ?? 999))
-    .map(({ catalog }) => catalog);
+  const rank = (slot) => {
+    if (slot.collection?.pinToTop) return -1;
+    return slot.rule ? slot.rule.order : Infinity;
+  };
+  // Array.prototype.sort is stable, so ties keep install order. Infinity minus
+  // Infinity is NaN, hence the comparison rather than a subtraction.
+  return slots.sort((a, b) => (rank(a) === rank(b) ? 0 : rank(a) < rank(b) ? -1 : 1));
+}
+
+// catalogRowTitle and localizedContentType, ported: "Popular - Movie",
+// "Top 10 - Series". Without the type, a Popular row for films and one for
+// shows read exactly the same.
+function singularType(type) {
+  const value = String(type || '').trim();
+  const known = { movie: 'Movie', series: 'Series', tv: 'TV' }[value.toLowerCase()];
+  return known || capitalize(value);
+}
+
+function capitalize(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+function rowTitle(name, type) {
+  const label = singularType(type);
+  return label ? `${capitalize(name)} - ${label}` : capitalize(name);
 }
 
 // A collection row's tiles are its *folders*, not the titles inside them —
@@ -416,25 +450,39 @@ function orderCatalogs(catalogs, settings) {
 //
 // Nothing is fetched from addons here, so collection rows cost one RPC for
 // the whole home screen rather than one request per source.
-function collectionRows(userCollections) {
-  return userCollections
-    .filter((collection) => collection.folders.length)
-    .map((collection) => ({
-      id: collection.id,
-      name: collection.title,
-      folders: collection.folders.map((folder) => ({
-        id: folder.id,
-        title: folder.title,
-        cover: folder.cover,
-        coverEmoji: folder.coverEmoji,
-        tileShape: folder.tileShape,
-        hideTitle: folder.hideTitle,
-      })),
-    }));
+function collectionRow(collection) {
+  return {
+    id: collection.id,
+    name: collection.title,
+    folders: collection.folders.map((folder) => ({
+      id: folder.id,
+      title: folder.title,
+      cover: folder.cover,
+      coverEmoji: folder.coverEmoji,
+      tileShape: folder.tileShape,
+      hideTitle: folder.hideTitle,
+    })),
+  };
 }
 
-// Opening a folder merges every catalog source it names, deduped. Sources
-// often overlap, and one dead addon shouldn't empty the folder.
+// buildAddonTabLabels, ported. The name comes from the installed addon's own
+// manifest, so a tab reads "Top 10" or "Popular" exactly as it does in Nuvio.
+function folderTabLabels(source, catalog) {
+  const typeLabel = { movie: 'Movies', series: 'Series' }[source.type.toLowerCase()] || capitalize(source.type);
+  const base = catalog?.name ? capitalize(catalog.name) : typeLabel;
+  const genre = usableGenre(source.genre);
+  return { label: genre ? `${base} · ${genre}` : base, typeLabel };
+}
+
+// The collection editor stores the literal "None" for "no genre".
+function usableGenre(genre) {
+  return genre && genre.trim() && genre.trim().toLowerCase() !== 'none' ? genre : null;
+}
+
+// A folder opens as it does in the app (FolderDetailViewModel): one tab or row
+// per catalog source, in the folder's own order, never reshuffled, plus a
+// combined "All" when the collection has one. The client builds "All" from
+// these so that loading more of a catalog can add to it.
 app.get('/api/collection/:collectionId/:folderId', requireUser, async (req, res, next) => {
   try {
     const token = await accessToken(req.user);
@@ -452,47 +500,68 @@ app.get('/api/collection/:collectionId/:folderId', requireUser, async (req, res,
     // that has this very catalog. A Live TV addon's id carries a suffix from
     // its login, so a reinstall or a second link can leave the collection
     // naming an id that's no longer installed while the same catalog is.
-    const addonFor = (source) => addons.find((a) => a.manifest.id === source.addonId)
-      || addons.find((a) => a.manifest.catalogs.some((c) => c.type === source.type && c.id === source.catalogId)
-        && a.manifest.id.split('.').slice(0, -1).join('.') === String(source.addonId).split('.').slice(0, -1).join('.'))
-      || addons.find((a) => a.manifest.catalogs.some((c) => c.type === source.type && c.id === source.catalogId));
+    const hasCatalog = (addon, source) => Boolean(addonsApi.findCatalog(addon, source.type, source.catalogId));
+    const family = (id) => String(id).split('.').slice(0, -1).join('.');
+    const addonFor = (source) => {
+      const exact = addons.find((a) => a.manifest.id === source.addonId);
+      if (exact && hasCatalog(exact, source)) return exact;
+      return addons.find((a) => hasCatalog(a, source) && family(a.manifest.id) === family(source.addonId))
+        || addons.find((a) => hasCatalog(a, source))
+        || exact;
+    };
 
     const problems = [];
-    const results = await Promise.all(folder.sources.map(async (source) => {
+    const tabs = await Promise.all(folder.sources.map(async (source) => {
       const addon = addonFor(source);
-      if (!addon) {
-        problems.push(`the addon this folder uses (${source.addonId}) isn't installed on this profile`);
-        return [];
-      }
-      return addonsApi.catalog(addons, {
-        transportUrl: addon.transportUrl,
-        type: source.type,
+      const definition = addon ? addonsApi.findCatalog(addon, source.type, source.catalogId) : null;
+      const type = definition?.type || source.type;
+      const genre = usableGenre(source.genre);
+      const tab = {
+        ...folderTabLabels(source, definition),
+        rawType: type,
+        rowTitle: null,
+        transportUrl: addon?.transportUrl || null,
+        type,
         id: source.catalogId,
-        genre: source.genre,
-        skip: Number(req.query.skip || 0),
-        // Opening a folder is a deliberate tap: worth waiting for a slow addon.
-        timeout: addonsApi.SLOW_TIMEOUT,
-      }).catch((err) => {
+        genre,
+        supportsSkip: addonsApi.supportsSkip(definition),
+        items: [],
+        error: null,
+      };
+      tab.rowTitle = tab.label === tab.typeLabel ? tab.label : `${tab.label} - ${singularType(type)}`;
+      if (!addon) {
+        tab.error = "The addon for this isn't installed on this profile.";
+        problems.push(`the addon this folder uses (${source.addonId}) isn't installed on this profile`);
+        return tab;
+      }
+      try {
+        tab.items = await addonsApi.catalog(addons, {
+          transportUrl: addon.transportUrl,
+          type,
+          id: source.catalogId,
+          genre,
+          // Opening a folder is a deliberate tap: worth waiting for a slow addon.
+          timeout: addonsApi.SLOW_TIMEOUT,
+        });
+      } catch (err) {
+        tab.error = `${addon.name || addon.manifest.name} didn't answer. Try again in a moment.`;
         problems.push(`${addon.name || addon.manifest.name} didn't answer (${err.name === 'TimeoutError' ? 'timed out' : err.message})`);
-        return [];
-      });
+      }
+      return tab;
     }));
     if (problems.length) console.error(`folder "${folder.title}": ${problems.join('; ')}`);
 
-    const seen = new Set();
-    const items = [];
-    for (const item of results.flat()) {
-      const key = `${item.type}:${item.id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      items.push(item);
-    }
-
     // Empty because something failed is not the same as genuinely empty: say why.
-    if (!items.length && problems.length) {
+    if (!tabs.some((tab) => tab.items.length) && problems.length) {
       return res.status(502).json({ error: `Couldn't load this folder: ${problems[0]}. Try again in a moment.` });
     }
-    res.json({ title: folder.title, collection: collection.title, items });
+    res.json({
+      title: folder.title,
+      collection: collection.title,
+      viewMode: collection.viewMode,
+      showAllTab: collection.showAllTab && tabs.length >= 2,
+      tabs,
+    });
   } catch (err) { next(err); }
 });
 
@@ -570,11 +639,14 @@ app.get('/api/streams/:type/:id', requireUser, async (req, res, next) => {
       addonsApi.streams(await installedAddons(req.user, { wait: true }), type, id),
       type === 'series' ? seasonPlaylist(req.user, id).catch(() => []) : [],
     ]);
+    // The list and the player's Source menu lead with the same language that
+    // playback defaults to.
+    const ordered = byAudioLanguage(list, playbackPrefs(req.user, type).audioLang);
     // The browser player asks for the ones it can actually play. Everything
     // else is still there behind "show everything", because the guess is made
     // from a release name and is sometimes wrong in both directions.
     const playableOnly = req.query.browser === '1';
-    let streams = playableOnly ? list.filter((s) => s.browser === 'yes') : list;
+    let streams = playableOnly ? ordered.filter((s) => s.browser === 'yes') : ordered;
     // The player's Source menu switches between these in place, so it needs
     // each one's conversion key, signed here rather than on request.
     if (req.query.keys === '1' && transcode.isAvailable()) {
@@ -702,7 +774,7 @@ app.get('/play', async (req, res, next) => {
 
     const user = currentUser(req);
     const { type, id } = req.query;
-    const prefs = playbackPrefs(user);
+    const prefs = playbackPrefs(user, type);
     const plan = {
       mediaUrl,
       type,
@@ -753,12 +825,13 @@ app.post('/api/prefs', requireUser, async (req, res, next) => {
       autoplay: Boolean(req.body?.autoplay),
       binge: Boolean(req.body?.binge),
       quality: ['any', '2160p', '1080p', '720p'].includes(req.body?.quality) ? req.body.quality : 'any',
-      audioLang: lang(req.body?.audioLang),
+      // 'file' is the explicit "leave it to the file"; empty means English.
+      audioLang: req.body?.audioLang === FILE_DEFAULT_AUDIO ? FILE_DEFAULT_AUDIO : lang(req.body?.audioLang),
       subLang: lang(req.body?.subLang),
       subtitles: req.body?.subtitles !== false,
     };
     await store.update(req.user, { prefs });
-    res.json(prefs);
+    res.json(storedPrefs({ prefs }));
   } catch (err) { next(err); }
 });
 
@@ -768,17 +841,47 @@ const DEFAULT_PREFS = {
   autoplay: false,
   binge: false,
   quality: 'any',
-  audioLang: '',   // '' means leave it to VLC
+  audioLang: 'en', // FILE_DEFAULT_AUDIO leaves it to the file
   subLang: '',     // '' means no subtitle preference
   subtitles: true, // false: never turn subtitles on by themselves
 };
 
+// Saved as the audio language when someone picks "File default". Anyone whose
+// saved preferences hold '' never chose: that was just the old default, and
+// they get English like everyone else.
+const FILE_DEFAULT_AUDIO = 'file';
+
+// The preferences as Settings shows them.
+function storedPrefs(user) {
+  const prefs = { ...DEFAULT_PREFS, ...(user?.prefs || {}) };
+  return { ...prefs, audioLang: prefs.audioLang || DEFAULT_PREFS.audioLang };
+}
+
+// The same, with audioLang a real language or '' for "whatever the file does".
+function languagePrefs(user) {
+  const prefs = storedPrefs(user);
+  return prefs.audioLang === FILE_DEFAULT_AUDIO ? { ...prefs, audioLang: '' } : prefs;
+}
+
 // The preferences as playback uses them. With subtitles switched off in
 // Settings, the language stays saved (for when they're switched back on) but
 // nothing — VLC playlists, the player's default track — turns them on.
-function playbackPrefs(user) {
-  const prefs = { ...DEFAULT_PREFS, ...(user?.prefs || {}) };
+// A live channel only follows a language someone actually picked: it has one
+// feed, and the English default shouldn't reroute how it's handed over.
+function playbackPrefs(user, type) {
+  const prefs = languagePrefs(user);
+  if (type === 'tv' && !user?.prefs?.audioLang) prefs.audioLang = '';
   return prefs.subtitles === false ? { ...prefs, subLang: '', subsOff: true } : prefs;
+}
+
+// Releases in this language first, those that don't say next, those that name
+// only other languages last. Order within each group is left alone, and nothing
+// is dropped: this reads a release name, which can be wrong.
+function byAudioLanguage(list, audioLang) {
+  if (!audioLang) return list;
+  const groups = [[], [], []];
+  for (const stream of list) groups[languages.releaseLanguageRank(stream, audioLang)].push(stream);
+  return groups.flat();
 }
 
 // Everything playable, best first: the quality preference floats to the top,
@@ -792,15 +895,7 @@ function rankStreams(list, { quality = 'any', audioLang = '' } = {}) {
     playable = [...matching, ...playable.filter((s) => !(s.badges || []).includes(quality))];
   }
 
-  // A release name saying "VOSTFR" or "Dual Audio" is a hint about the audio
-  // track, so float those up — but never drop the others, since most releases
-  // say nothing about language at all and would vanish.
-  if (audioLang) {
-    const mentions = (s) => languages.streamMentions(`${s.headline} ${s.detail}`, audioLang);
-    playable = [...playable.filter(mentions), ...playable.filter((s) => !mentions(s))];
-  }
-
-  return playable;
+  return byAudioLanguage(playable, audioLang);
 }
 
 // How hard to check a candidate before putting it in a playlist.
@@ -923,7 +1018,7 @@ a{display:inline-block;margin-top:20px;padding:13px 28px;border-radius:40px;back
 app.get('/play/auto/:type/:id', requireUser, async (req, res, next) => {
   try {
     const { type, id } = req.params;
-    const prefs = playbackPrefs(req.user);
+    const prefs = playbackPrefs(req.user, type);
 
     // With binge on, hand the player a playlist of what's coming rather than
     // a single file — it gets a real queue with next/previous of its own.
@@ -1590,7 +1685,7 @@ app.get('/api/subtitles/:type/:id', requireUser, async (req, res, next) => {
     // The language to match: the player's own choice for this session if it
     // sent one, else the default from Settings, else the audio language,
     // else English — subtitles are on by default.
-    const prefs = { ...DEFAULT_PREFS, ...(req.user.prefs || {}) };
+    const prefs = languagePrefs(req.user);
     const want = String(req.query.lang || prefs.subLang || prefs.audioLang || 'en');
     const openSubs = (sub) => /opensubtitles/i.test(String(sub.addon || ''));
 
@@ -1732,7 +1827,7 @@ app.post('/api/transcode/start', requireUser, async (req, res) => {
     // an explicit choice from the player's menu always wins.
     let audioIndex = Number.isInteger(req.body?.audio) ? req.body.audio : null;
     if (audioIndex === null && prefs.audioLang) {
-      const match = (plan?.audioTracks || []).find((t) => languages.trackMatches(t.lang, prefs.audioLang));
+      const match = languages.bestAudioTrack(plan?.audioTracks, prefs.audioLang);
       if (match) audioIndex = match.index;
     }
     // The subtitle track inside the file to turn on by default — only with

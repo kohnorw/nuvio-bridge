@@ -285,6 +285,10 @@ export async function collections(accessToken, profileIndex) {
     title: c.title,
     pinToTop: Boolean(c.pinToTop),
     backdrop: c.backdropImageUrl || null,
+    // How a folder of this collection opens (FolderViewMode.kt): a tab per
+    // catalog unless the collection says otherwise.
+    viewMode: folderViewMode(c.viewMode),
+    showAllTab: c.showAllTab !== false,
     folders: (c.folders || []).map((f) => ({
       id: f.id,
       title: f.title,
@@ -300,6 +304,11 @@ export async function collections(accessToken, profileIndex) {
   })).filter((c) => c.title);
 }
 
+function folderViewMode(raw) {
+  const mode = String(raw || '').toLowerCase();
+  return mode === 'rows' || mode === 'follow_layout' ? mode : 'tabbed_grid';
+}
+
 function resolveSources(folder) {
   const primary = (folder.sources || [])
     .filter((s) => (s.provider || 'addon') === 'addon' && s.catalogId);
@@ -313,29 +322,43 @@ function resolveSources(folder) {
   })).filter((s) => s.addonId && s.type && s.catalogId);
 }
 
-// Which catalogs the person has enabled on home and in what order. Absent or
-// empty means "show everything", which is what the app falls back to.
+// Which catalogs and collections the person has on home, in what order and
+// under what names. Absent or empty means "show everything", which is what the
+// app falls back to.
+//
+// The blob is SyncHomeCatalogPayload (HomeCatalogSettingsSyncService.kt):
+// { items: [{ addon_id, type, catalog_id, enabled, order, custom_title,
+//             is_collection, collection_id }] }.
+// The apps read it with p_platform set; a backend from before that parameter
+// existed only accepts the profile, so fall back to that.
+const HOME_CATALOG_PLATFORM = 'home_catalog_shared';
+
 export async function homeCatalogSettings(accessToken, profileIndex) {
-  const rows = await request('/rest/v1/rpc/sync_pull_home_catalog_settings', {
+  const pull = (body) => request('/rest/v1/rpc/sync_pull_home_catalog_settings', {
     method: 'POST',
     accessToken,
-    body: { p_profile_id: profileIndex },
+    body,
   });
+  const rows = await pull({ p_profile_id: profileIndex, p_platform: HOME_CATALOG_PLATFORM })
+    .catch(() => pull({ p_profile_id: profileIndex }));
 
   const blob = (rows || [])[0]?.settings_json ?? (rows || [])[0]?.catalogs_json;
   const parsed = typeof blob === 'string' ? JSON.parse(blob) : blob;
   if (!parsed) return null;
 
-  const entries = Array.isArray(parsed) ? parsed : parsed.catalogs;
+  const entries = Array.isArray(parsed) ? parsed : (parsed.items ?? parsed.catalogs);
   if (!Array.isArray(entries)) return null;
 
   return entries.map((e, i) => ({
-    addonId: e.addonId ?? e.addon_id,
+    addonId: e.addon_id ?? e.addonId,
     type: e.type,
-    catalogId: e.catalogId ?? e.catalog_id ?? e.id,
+    catalogId: e.catalog_id ?? e.catalogId ?? e.id,
     enabled: e.enabled !== false,
     order: e.order ?? e.sortOrder ?? i,
-  })).filter((e) => e.type && e.catalogId);
+    customTitle: String(e.custom_title ?? e.customTitle ?? '').trim(),
+    isCollection: Boolean(e.is_collection ?? e.isCollection),
+    collectionId: e.collection_id ?? e.collectionId ?? null,
+  })).filter((e) => (e.isCollection ? e.collectionId : e.type && e.catalogId));
 }
 
 

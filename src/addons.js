@@ -258,10 +258,29 @@ export function catalogList(addons, { includeRequiredExtras = false, home = fals
         name: catalog.name,
         genres: genre?.options || [],
         genreRequired: Boolean(genre?.isRequired),
+        supportsSkip: supportsSkip(catalog),
       });
     }
   }
   return out;
+}
+
+// Only a catalog that declares `skip` has more than one page. A "Top 10" asked
+// for page two just sends the same ten again (CatalogRepositoryImpl.kt).
+export function supportsSkip(catalog) {
+  return Boolean(catalog?.extra?.some((e) => String(e.name).toLowerCase() === 'skip'));
+}
+
+// The catalog a collection source names, as findCollectionCatalog does it: an
+// exact type, or the only catalog with that id whatever its type's case, then
+// the same again for ids a collection saved with a ",genre" tail.
+export function findCatalog(addon, type, id) {
+  const lookup = (wanted) => {
+    const candidates = addon.manifest.catalogs.filter((c) => c.id === wanted);
+    const loose = candidates.filter((c) => c.type.toLowerCase() === String(type).trim().toLowerCase());
+    return candidates.find((c) => c.type === String(type).trim()) || (loose.length === 1 ? loose[0] : null);
+  };
+  return lookup(id) || lookup(String(id).split(',')[0]);
 }
 
 // buildCatalogUrl, ported: extras are a path segment in a fixed order.

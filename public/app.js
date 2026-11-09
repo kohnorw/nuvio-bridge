@@ -1,6 +1,6 @@
-import * as platform from './platform.js?v=118';
-import * as player from './player.js?v=118';
-import * as livetv from './livetv.js?v=118';
+import * as platform from './platform.js?v=119';
+import * as player from './player.js?v=119';
+import * as livetv from './livetv.js?v=119';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -9,7 +9,7 @@ const THEMES = ['White', 'Gold', 'Jade', 'RoseGold', 'ArcticBlue', 'Graphite',
                 'Crimson', 'Ocean', 'Violet', 'Emerald', 'Amber', 'Rose'];
 
 const state = { profiles: [], profile: null, session: null, homeLoaded: false, libraryLoaded: false };
-let prefs = { autoplay: false, binge: false, quality: 'any', audioLang: '', subLang: '', subtitles: true };
+let prefs = { autoplay: false, binge: false, quality: 'any', audioLang: 'en', subLang: '', subtitles: true };
 let languageOptions = [];
 const QUALITIES = [['any', 'Any'], ['2160p', '4K'], ['1080p', '1080p'], ['720p', '720p']];
 
@@ -279,13 +279,13 @@ async function loadHome() {
     if (watching.length) rows.append(renderContinueRow(watching));
     lastRowJson = JSON.stringify(watching.map((e) => [e.id, Math.round(e.position || 0), e.updatedAt]));
 
-    // Collections sit above catalog rows, as they do in the app.
-    for (const collection of data.collections || []) {
-      rows.append(renderCollectionRow(collection));
+    // Collections and catalogs together, in the order set in the app.
+    const sections = data.sections || [];
+    for (const section of sections) {
+      rows.append(section.collection ? renderCollectionRow(section.collection) : renderRow(section.row, section.row.items));
     }
-    for (const row of data.rows) rows.append(renderRow(row, row.items));
 
-    if (!data.rows.length && !(data.collections || []).length) {
+    if (!sections.length) {
       rows.insertAdjacentHTML('beforeend', '<p class="empty">No addons returned anything. Check that this profile has addons installed in Nuvio.</p>');
     }
   } catch (err) {
@@ -546,11 +546,11 @@ function renderRow(row, items) {
       <h2 class="row-title"></h2>
       <button class="row-source" aria-label="View all"><svg viewBox="0 0 24 24"><path d="M9 5.5 15.5 12 9 18.5 7.6 17.1 12.7 12 7.6 6.9z"/></svg></button>
     </div><div class="rail-wrap"><div class="rail"></div>${railArrows()}</div>`;
-  section.querySelector('.row-title').textContent = row.name;
+  section.querySelector('.row-title').textContent = row.title || row.name;
 
   const pill = section.querySelector('.row-source');
   if (row.collection) pill.hidden = true;
-  if (row.transportUrl) {
+  if (row.transportUrl && row.canViewAll !== false) {
     pill.addEventListener('click', () => openCatalog(row));
     section.querySelector('.row-head').addEventListener('click', (e) => {
       if (e.target.closest('.row-source')) return;
@@ -645,30 +645,232 @@ function folderFallback(folder) {
   return span;
 }
 
-async function openFolder(collection, folder) {
+// A folder opens as it does in the app: one tab per catalog it holds (Top 10,
+// Popular, Trending…), or one row each if its collection is set to rows, each
+// keeping the addon's own order. `folderView` is everything on screen, so
+// coming back from "view all" can redraw it without asking the addons again.
+let folderView = null;
+let folderOpens = 0;
+
+const itemKey = (item) => `${item.type}:${item.id}`;
+
+async function openFolder(collection, folder, { retrying = false } = {}) {
+  const opening = ++folderOpens;
   catalogCursor = null;
+  folderView = null;
   $('#catalog-title').textContent = folder.title;
   $('#catalog-genres').hidden = true;
+  $('#catalog-tabs').hidden = true;
+  $('#catalog-rows').hidden = true;
+  $('#catalog-grid').hidden = false;
   $('#catalog-more').hidden = true;
   skeleton($('#catalog-grid'), { count: 12 });
-  pushOverlay(() => screen('shell'));
-  screen('catalog');
+  if (!retrying) {
+    pushOverlay(() => { folderView = null; screen('shell'); });
+    screen('catalog');
+  }
 
   try {
     const data = await api(`/api/collection/${encodeURIComponent(collection.id)}/${encodeURIComponent(folder.id)}`);
-    $('#catalog-grid').innerHTML = '';
-    if (!data.items.length) {
-      $('#catalog-grid').innerHTML = '<p class="empty">Nothing in this folder right now.</p>';
-      return;
-    }
-    for (const item of data.items) $('#catalog-grid').append(poster(item));
+    if (opening !== folderOpens) return;
+    folderView = folderViewFrom(collection, folder, data);
+    drawFolder();
   } catch (err) {
+    if (opening !== folderOpens) return;
     const box = $('#catalog-grid');
     box.innerHTML = '';
     const msg = Object.assign(document.createElement('p'), { className: 'empty', textContent: err.message });
     const retry = Object.assign(document.createElement('button'), { className: 'btn-ghost', textContent: 'Try again' });
-    retry.addEventListener('click', () => { closeTopOverlay?.(); openFolder(collection, folder); });
+    retry.addEventListener('click', () => openFolder(collection, folder, { retrying: true }));
     box.append(msg, retry);
+  }
+}
+
+function folderViewFrom(collection, folder, data) {
+  const sources = data.tabs.map((tab) => {
+    const items = [];
+    const seen = new Set();
+    for (const item of tab.items) {
+      if (seen.has(itemKey(item))) continue;
+      seen.add(itemKey(item));
+      items.push(item);
+    }
+    return { ...tab, items, seen, skip: tab.items.length, hasMore: tab.supportsSkip && tab.items.length > 0, loading: false };
+  });
+  const view = { collection, folder, mode: data.viewMode, sources, selected: 0, all: null };
+  if (data.showAllTab) {
+    view.all = { items: [], seen: new Set() };
+    fillAllTab(view);
+  }
+  return view;
+}
+
+// "All" takes one from each catalog in turn, then adds what later pages bring
+// to the end, so what's on screen never moves. Returns what it added.
+function fillAllTab(view) {
+  const lists = view.sources.map((source) => source.items);
+  const longest = Math.max(0, ...lists.map((list) => list.length));
+  const added = [];
+  for (let i = 0; i < longest; i += 1) {
+    for (const list of lists) {
+      const item = list[i];
+      if (!item || view.all.seen.has(item.id)) continue;
+      view.all.seen.add(item.id);
+      view.all.items.push(item);
+      added.push(item);
+    }
+  }
+  return added;
+}
+
+function folderTabs(view) {
+  const tabs = view.sources.map((source) => ({ source, label: source.label, sub: singularOf(source.rawType) }));
+  return view.all ? [{ isAll: true, label: 'All', sub: 'Combined' }, ...tabs] : tabs;
+}
+
+function singularOf(type) {
+  const value = String(type || '');
+  return { movie: 'Movie', series: 'Series', tv: 'TV' }[value.toLowerCase()] || value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function drawFolder() {
+  const view = folderView;
+  catalogCursor = null;
+  $('#catalog-title').textContent = view.folder.title;
+  $('#catalog-genres').hidden = true;
+
+  if (view.mode === 'tabbed_grid') {
+    drawFolderTabs();
+    showFolderTab(view.selected);
+    return;
+  }
+
+  // Rows: as many rails as the folder has catalogs. An empty one is left out,
+  // as the app does; one that failed says so.
+  $('#catalog-tabs').hidden = true;
+  $('#catalog-grid').hidden = true;
+  $('#catalog-more').hidden = true;
+  const box = $('#catalog-rows');
+  box.innerHTML = '';
+  box.hidden = false;
+  for (const source of view.sources) {
+    if (source.error) {
+      const failed = document.createElement('section');
+      failed.className = 'row';
+      failed.innerHTML = '<div class="row-head"><h2 class="row-title"></h2></div><p class="empty"></p>';
+      failed.querySelector('.row-title').textContent = source.rowTitle;
+      failed.querySelector('.empty').textContent = source.error;
+      box.append(failed);
+    } else if (source.items.length) {
+      box.append(renderRow({ ...source, title: source.rowTitle, name: source.rowTitle, genres: [], fromFolder: true, canViewAll: source.hasMore }, source.items));
+    }
+  }
+  if (!box.children.length) box.innerHTML = '<p class="empty">Nothing in this folder right now.</p>';
+}
+
+function drawFolderTabs() {
+  const view = folderView;
+  const bar = $('#catalog-tabs');
+  bar.innerHTML = '';
+  const tabs = folderTabs(view);
+  // A single catalog needs no tabs, which is what the app does too.
+  bar.hidden = tabs.length < 2;
+  tabs.forEach((tab, index) => {
+    const button = document.createElement('button');
+    button.className = 'chip folder-tab';
+    button.innerHTML = '<span class="folder-tab-name"></span><span class="folder-tab-type"></span>';
+    button.querySelector('.folder-tab-name').textContent = tab.label;
+    button.querySelector('.folder-tab-type').textContent = tab.sub;
+    button.setAttribute('aria-pressed', String(index === view.selected));
+    button.addEventListener('click', () => {
+      bar.querySelectorAll('.folder-tab').forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+      showFolderTab(index);
+      window.scrollTo(0, 0);
+    });
+    bar.append(button);
+  });
+  bar.querySelector('[aria-pressed="true"]')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+}
+
+function showFolderTab(index) {
+  const view = folderView;
+  view.selected = index;
+  const tab = folderTabs(view)[index];
+  const grid = $('#catalog-grid');
+  $('#catalog-rows').hidden = true;
+  grid.hidden = false;
+  grid.innerHTML = '';
+
+  const items = tab.isAll ? view.all.items : tab.source.items;
+  if (items.length) {
+    for (const item of items) grid.append(poster(item));
+  } else if (tab.source?.error) {
+    const msg = Object.assign(document.createElement('p'), { className: 'empty', textContent: tab.source.error });
+    const retry = Object.assign(document.createElement('button'), { className: 'btn-ghost', textContent: 'Try again' });
+    retry.addEventListener('click', () => loadMoreFromSource(view, tab.source, { retry: true }).then(() => {
+      if (folderView === view && view.selected === index) showFolderTab(index);
+    }));
+    grid.append(msg, retry);
+  } else {
+    grid.innerHTML = '<p class="empty">Nothing here right now.</p>';
+  }
+  updateFolderMore();
+}
+
+function folderTabHasMore(view, tab) {
+  return tab.isAll ? view.sources.some((s) => s.hasMore) : tab.source.hasMore;
+}
+
+function updateFolderMore() {
+  const view = folderView;
+  $('#catalog-more').hidden = !view || !folderTabHasMore(view, folderTabs(view)[view.selected]);
+}
+
+// The next page of one catalog, added to what's there. A page with nothing new
+// on it means the catalog has run out, even if it hasn't said so.
+async function loadMoreFromSource(view, source, { retry = false } = {}) {
+  if (source.loading || (!source.hasMore && !retry)) return [];
+  source.loading = true;
+  try {
+    const query = new URLSearchParams({
+      transportUrl: source.transportUrl, type: source.type, id: source.id, skip: String(source.skip),
+    });
+    if (source.genre) query.set('genre', source.genre);
+    const page = await api(`/api/catalog?${query}`);
+    const fresh = page.filter((item) => !source.seen.has(itemKey(item)));
+    for (const item of fresh) { source.seen.add(itemKey(item)); source.items.push(item); }
+    source.skip += page.length;
+    source.error = null;
+    source.hasMore = source.supportsSkip && fresh.length > 0;
+    return fresh;
+  } catch (err) {
+    if (retry) source.error = err.message; else toast(err.message);
+    return [];
+  } finally {
+    source.loading = false;
+  }
+}
+
+async function loadMoreOfFolder() {
+  const view = folderView;
+  const shown = view.selected;
+  const tab = folderTabs(view)[shown];
+  const more = $('#catalog-more');
+  more.disabled = true;
+  try {
+    let fresh;
+    if (tab.isAll) {
+      await Promise.all(view.sources.map((source) => loadMoreFromSource(view, source)));
+      fresh = fillAllTab(view);
+    } else {
+      fresh = await loadMoreFromSource(view, tab.source);
+      if (view.all) fillAllTab(view);
+    }
+    if (folderView !== view || view.selected !== shown) return;
+    for (const item of fresh) $('#catalog-grid').append(poster(item));
+    updateFolderMore();
+  } finally {
+    more.disabled = false;
   }
 }
 
@@ -752,12 +954,19 @@ $('#search-form').addEventListener('submit', async (e) => {
 let catalogCursor = null;
 
 async function openCatalog(row) {
-  catalogCursor = { row, skip: 0, genre: row.genreRequired ? (row.genres || [])[0] : null };
-  $('#catalog-title').textContent = row.name;
+  catalogCursor = { row, skip: 0, genre: row.genre || (row.genreRequired ? (row.genres || [])[0] : null) };
+  $('#catalog-title').textContent = row.title || row.name;
+  $('#catalog-tabs').hidden = true;
+  $('#catalog-rows').hidden = true;
+  $('#catalog-grid').hidden = false;
   skeleton($('#catalog-grid'), { count: 12 });
   $('#catalog-more').hidden = true;
   renderGenres(row);
-  pushOverlay(() => screen('shell'));
+  // "View all" from inside a folder comes back to the folder.
+  const folder = row.fromFolder ? folderView : null;
+  pushOverlay(() => {
+    if (folder) { folderView = folder; drawFolder(); window.scrollTo(0, 0); } else { screen('shell'); }
+  });
   screen('catalog');
   await loadCatalogPage(true);
 }
@@ -807,7 +1016,7 @@ async function loadCatalogPage(replace = false) {
     for (const item of items) grid.append(poster(item));
 
     catalogCursor.skip = skip + items.length;
-    more.hidden = items.length < 20;
+    more.hidden = items.length < 20 || row.supportsSkip === false;
   } catch (err) {
     if (replace) grid.innerHTML = `<p class="empty">${err.message}</p>`;
     else toast(err.message);
@@ -817,7 +1026,7 @@ async function loadCatalogPage(replace = false) {
 }
 
 $('#catalog-back').addEventListener('click', () => history.back());
-$('#catalog-more').addEventListener('click', () => loadCatalogPage(false));
+$('#catalog-more').addEventListener('click', () => (catalogCursor ? loadCatalogPage(false) : loadMoreOfFolder()));
 
 // --------------------------------------------------------------- details
 
@@ -1501,7 +1710,7 @@ function openSheet() {
   $('#pref-autoplay').checked = prefs.autoplay;
   $('#pref-binge').checked = prefs.binge;
   renderQualityChips();
-  renderLanguageSelect('#pref-audio-lang', 'audioLang', 'Whatever the file defaults to');
+  renderLanguageSelect('#pref-audio-lang', 'audioLang', 'Whatever the file defaults to', 'file');
   renderLanguageSelect('#pref-sub-lang', 'subLang', 'No subtitles');
   $('#sheet-backdrop').hidden = false;
   $('#playback-sheet').hidden = false;
@@ -1534,12 +1743,12 @@ function renderQualityChips() {
 
 // A native <select> rather than chips: two dozen languages is a list, not a
 // row, and iOS gives a select its own wheel picker for free.
-function renderLanguageSelect(selector, key, noneLabel) {
+function renderLanguageSelect(selector, key, noneLabel, noneValue = '') {
   const select = $(selector);
   select.innerHTML = '';
 
   const none = document.createElement('option');
-  none.value = '';
+  none.value = noneValue;
   none.textContent = noneLabel;
   select.append(none);
 
@@ -1550,7 +1759,7 @@ function renderLanguageSelect(selector, key, noneLabel) {
     select.append(option);
   }
 
-  select.value = prefs[key] || '';
+  select.value = prefs[key] || noneValue;
   select.onchange = () => {
     prefs[key] = select.value;
     savePrefs();
@@ -1561,7 +1770,7 @@ function renderLanguageSelect(selector, key, noneLabel) {
 // changing one updates the other the next time it's opened.
 function renderSettingsLanguages() {
   if (!$('#settings-audio-lang')) return;
-  renderLanguageSelect('#settings-audio-lang', 'audioLang', 'File default');
+  renderLanguageSelect('#settings-audio-lang', 'audioLang', 'File default', 'file');
   renderLanguageSelect('#settings-sub-lang', 'subLang', 'Off');
   renderSubtitleSwitch();
 }

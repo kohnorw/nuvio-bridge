@@ -73,11 +73,36 @@ export function trackMatches(trackLang, code) {
   return Boolean(target && value && target.match.test(value));
 }
 
-// Release names carry language hints in free text — "MULTi", "VOSTFR",
-// "Dual Audio", "[Latino]". This is a hint, not a guarantee, so callers use it
-// to rank streams rather than to filter them out.
-export function streamMentions(text, code) {
+// Files often carry a director's commentary or an audio description in the same
+// language as the film, sometimes ahead of the main mix.
+const NOT_THE_FILM = /comment|descriptive|audio.?desc|visually.?impaired|narrat/i;
+
+// The track to start on in this language, or null when the file has none:
+// never a commentary, the file's own default among the matches if it marked
+// one, otherwise the first. A track tagged "und" (or not at all) is judged by
+// its title, because plenty of files only say "English 5.1" there.
+export function bestAudioTrack(tracks, code) {
+  const spoken = (tracks || []).filter((t) => !t.notFilm && !NOT_THE_FILM.test(String(t.title || '')));
+  const tagged = spoken.filter((t) => trackMatches(t.lang, code));
+  const matches = tagged.length ? tagged : spoken.filter((t) => (
+    (!t.lang || /^(und|unk|mis|zxx)$/i.test(t.lang)) && t.title && trackMatches(t.title, code)
+  ));
+  return matches.find((t) => t.default) || matches[0] || null;
+}
+
+// What a release's name says about its audio, for ranking only:
+//   0  names this language
+//   1  says nothing either way — most English releases, and any MULTi or dual
+//      audio release, which may well carry it
+//   2  names only other languages (an Italian-only or Hindi-only release)
+// `stream` is a normalised stream: `languages` and `audio` are describeStream's.
+export function releaseLanguageRank(stream, code) {
   const target = find(code);
-  if (!target || !text) return false;
-  return target.match.test(String(text));
+  if (!target) return 1;
+  const spoken = (stream.languages || []).filter((l) => !/\bsub(s|bed)?$/i.test(l));
+  const names = (l) => l === target.name || l.startsWith(`${target.name} `)
+    || (target.code === 'es' && l === 'Latino');
+  if (spoken.some(names)) return 0;
+  if (!spoken.length || (stream.audio || []).some((a) => /^(dual|multi) audio$/i.test(a))) return 1;
+  return 2;
 }

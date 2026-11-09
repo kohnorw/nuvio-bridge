@@ -293,6 +293,8 @@ async function probeNow(url) {
         title: stream.tags?.title || null,
         label: audioLabel(stream, order),
         default: stream.disposition?.default === 1,
+        // A commentary or audio description, as the file itself flags them.
+        notFilm: stream.disposition?.comment === 1 || stream.disposition?.visual_impaired === 1,
       })),
       // Subtitles inside the file. `stream` is ffmpeg's absolute index.
       subtitleTracks: streams
