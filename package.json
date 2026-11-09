@@ -1,6 +1,6 @@
 {
   "name": "nuvio-bridge",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "description": "Self-hosted web front end for a Nuvio account that plays your streams on any device",
   "type": "module",

@@ -1,6 +1,6 @@
-import * as platform from './platform.js?v=120';
-import * as player from './player.js?v=120';
-import * as livetv from './livetv.js?v=120';
+import * as platform from './platform.js?v=121';
+import * as player from './player.js?v=121';
+import * as livetv from './livetv.js?v=121';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -171,6 +171,7 @@ $('#login-form').addEventListener('submit', async (e) => {
 });
 
 $('#signout').addEventListener('click', async () => {
+  try { localStorage.removeItem(PROFILES_KEY); } catch { /* private mode */ }
   await post('/api/logout');
   location.reload();
 });
@@ -179,15 +180,52 @@ $('#switch-profile').addEventListener('click', () => showProfiles());
 
 // -------------------------------------------------------------- profiles
 
+// The picker from last time, drawn before anything has been asked of the
+// network. Purely a head start: the real list replaces it if it differs.
+const PROFILES_KEY = 'nuvio.profiles';
+
+function savedProfiles() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROFILES_KEY));
+    return saved?.email === state.session?.email && Array.isArray(saved?.profiles) ? saved.profiles : null;
+  } catch { return null; }
+}
+
+function rememberProfiles(profiles) {
+  try {
+    if (profiles.length) localStorage.setItem(PROFILES_KEY, JSON.stringify({ email: state.session?.email, profiles }));
+  } catch { /* private mode */ }
+}
+
 async function showProfiles() {
-  state.profiles = await takeProfiles().catch(() => []);
+  const live = takeProfiles();
+  const saved = savedProfiles();
+
+  // Only with something to choose between: a single saved profile might not be
+  // the whole story, and that case skips the picker altogether.
+  if (saved?.length > 1) {
+    state.profiles = saved;
+    drawProfiles(saved);
+    live.then((profiles) => {
+      if (!profiles.length || JSON.stringify(profiles) === JSON.stringify(saved)) return;
+      state.profiles = profiles;
+      if (!$('#screen-profiles').hidden) drawProfiles(profiles);
+    }).catch(() => {});
+    return undefined;
+  }
+
+  state.profiles = await live.catch(() => []);
 
   // One profile and nothing to choose: don't make them tap through a picker.
   if (state.profiles.length <= 1) return selectProfile(state.profiles[0] || { index: 1, name: 'Profile' });
+  drawProfiles(state.profiles);
+  return undefined;
+}
 
+function drawProfiles(profiles) {
   const grid = $('#profile-grid');
   grid.innerHTML = '';
-  for (const p of state.profiles) {
+  for (const p of profiles) {
     const card = document.createElement('button');
     card.className = 'profile-card';
     card.innerHTML = `<span class="avatar"></span><span class="profile-name"></span>`;
@@ -225,6 +263,7 @@ function paintAvatar(element, profile) {
   if (!profile.avatarUrl) { showInitial(); return; }
   const image = document.createElement('img');
   image.alt = '';
+  image.fetchPriority = 'high';
   image.addEventListener('error', () => { image.remove(); showInitial(); }, { once: true });
   image.src = profile.avatarUrl;
   element.append(image);
@@ -1981,7 +2020,9 @@ const prefetched = { home: null, profiles: null };
 function takeProfiles() {
   const early = prefetched.profiles;
   prefetched.profiles = null;
-  return early || api('/api/profiles');
+  const request = early || api('/api/profiles');
+  request.then((profiles) => { if (state.session?.signedIn) rememberProfiles(profiles); }).catch(() => {});
+  return request;
 }
 
 async function boot() {

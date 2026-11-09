@@ -16,6 +16,7 @@ import * as progress from './progress.js';
 import * as vlcLauncher from './vlclauncher.js';
 import * as subsync from './subsync.js';
 import * as iptv from './iptv.js';
+import * as avatars from './avatars.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
@@ -199,10 +200,48 @@ app.get('/api/session', (req, res) => {
 
 // ------------------------------------------------------------- profiles
 
+// The picker is the first thing on screen, and building this list takes
+// several trips to Nuvio. Kept per account and served at once while a fresh
+// copy is fetched behind it, the same way as the home screen.
+const PROFILES_FRESH_MS = 60_000;
+const PROFILES_STALE_MS = 24 * 3600 * 1000;
+const profilesCache = new Map();
+
+async function buildProfiles(user) {
+  const token = await accessToken(user);
+  const list = await nuvio.withAvatarImages(token, await nuvio.profiles(token));
+  return list.map((profile) => ({ ...profile, avatarUrl: avatars.localUrl(profile.avatarUrl, nuvio.config.backendUrl) }));
+}
+
 app.get('/api/profiles', requireUser, async (req, res, next) => {
   try {
-    const token = await accessToken(req.user);
-    res.json(await nuvio.withAvatarImages(token, await nuvio.profiles(token)));
+    const key = req.user.userId;
+    const hit = profilesCache.get(key);
+    const age = hit ? Date.now() - hit.at : Infinity;
+    if (hit && age < PROFILES_STALE_MS) {
+      if (age > PROFILES_FRESH_MS && !hit.pending) {
+        hit.pending = buildProfiles(req.user)
+          .then((body) => { profilesCache.set(key, { at: Date.now(), body }); })
+          .catch(() => { hit.pending = null; });
+      }
+      return res.json(hit.body);
+    }
+    const body = await buildProfiles(req.user);
+    if (profilesCache.size > 500) profilesCache.clear();
+    profilesCache.set(key, { at: Date.now(), body });
+    return res.json(body);
+  } catch (err) { next(err); }
+});
+
+app.get('/avatar/:key', requireUser, async (req, res, next) => {
+  try {
+    const picture = await avatars.read(req.params.key);
+    if (!picture) return res.status(404).type('text/plain').send('Not found');
+    res.setHeader('cache-control', 'private, max-age=604800');
+    res.setHeader('x-content-type-options', 'nosniff');
+    // An SVG opened directly is a page on this origin; this keeps it inert.
+    res.setHeader('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    return res.type(picture.type).send(picture.body);
   } catch (err) { next(err); }
 });
 

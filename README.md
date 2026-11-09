@@ -719,6 +719,7 @@ Everything under `/api` except login/signup/session requires a device cookie.
 | `GET` | `/vlc-setup` | Setup page for the desktop VLC launcher. |
 | `GET` | `/vlc-launcher/:os` | Launcher installer for `windows`, `macos` or `linux` (`?remove=1` for the remover, `?dl=1` to download). |
 | `GET` | `/api/profiles` · `POST` `/api/profile` | Nuvio profile picker. |
+| `GET` | `/avatar/:key` | A profile picture, downloaded once and kept in `/data/avatars`. |
 | `POST` | `/api/theme`, `/api/prefs` | Per-account theme and playback settings. |
 | `GET` | `/api/home`, `/api/catalogs`, `/api/catalog` | Home rows and paged catalogs. |
 | `GET` | `/api/collections`, `/api/collection/:id/:folderId` | Collections and folder contents. |
