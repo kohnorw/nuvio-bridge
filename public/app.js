@@ -1,6 +1,6 @@
-import * as platform from './platform.js?v=121';
-import * as player from './player.js?v=121';
-import * as livetv from './livetv.js?v=121';
+import * as platform from './platform.js?v=122';
+import * as player from './player.js?v=122';
+import * as livetv from './livetv.js?v=122';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -1082,7 +1082,11 @@ async function openDetails(item) {
   const type = item.type || 'movie';
   const baseId = (item.parentId || item.id).split(':')[0];
 
-  pushOverlay(() => screen('shell'));
+  // Back returns to wherever this was opened from — a category's tab or "view
+  // all" as much as the home screen — at the same place on the page.
+  const cameFrom = $('#screen-catalog').hidden ? 'shell' : 'catalog';
+  const scrolledTo = window.scrollY;
+  pushOverlay(() => { screen(cameFrom); window.scrollTo(0, scrolledTo); });
   screen('details');
   setBackdrop(item.background, item.poster);
   $('#details-title').textContent = item.name || baseId;
