@@ -1536,6 +1536,15 @@ function streamRow(s, queued) {
 
   el.querySelector('.from').textContent = s.playable ? s.addon : `${s.addon} — needs debrid`;
 
+  // The file name, when the addon gave one, so near-identical sources can be
+  // told apart without opening the full release name.
+  if (s.filename) {
+    const file = document.createElement('div');
+    file.className = 'stream-file';
+    file.textContent = s.filename;
+    el.querySelector('.from').after(file);
+  }
+
   // Only worth saying when the list is showing things the browser can't take
   // as they are; in VLC it makes no difference at all.
   if (s.playable && s.browser === 'no' && platform.resolve() === 'browser') {

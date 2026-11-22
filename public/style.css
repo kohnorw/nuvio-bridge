@@ -600,6 +600,13 @@ button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px
   overflow-wrap: anywhere;
 }
 .stream-detail.open { display: block; }
+.stream-file {
+  margin-top: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; line-height: 16px;
+  color: rgb(255 255 255 / var(--o-muted));
+  overflow-wrap: anywhere;
+}
 .stream .from {
   font-size: 12px; line-height: 14px; letter-spacing: 0.8px; text-transform: uppercase;
   color: rgb(255 255 255 / var(--o-muted)); margin-top: 6px;
@@ -1860,7 +1867,7 @@ body.watching { overflow: hidden; }
 .watch-menu-item { flex-direction: column; align-items: flex-start; gap: 2px; }
 .watch-menu-item:disabled { opacity: 0.4; cursor: default; }
 .watch-menu-label { display: block; }
-.watch-menu-detail { display: block; font-size: 12px; line-height: 16px; font-weight: 400; white-space: pre-line; color: rgb(255 255 255 / 0.6); }
+.watch-menu-detail { display: block; font-size: 12px; line-height: 16px; font-weight: 400; white-space: pre-line; overflow-wrap: anywhere; color: rgb(255 255 255 / 0.6); }
 .watch-menu-empty { margin: 10px 12px; font-size: 14px; color: rgb(255 255 255 / 0.7); }
 #watch-options-btn.is-on::after {
   content: ""; position: absolute; right: 9px; top: 9px;
