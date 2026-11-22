@@ -569,7 +569,7 @@ export function normalizeStream(s, addonName) {
   const url = s.url || null;
   const playable = Boolean(url) && /^https?:/i.test(url);
 
-  const filename = s.behaviorHints?.filename || null;
+  const filename = streamFilename(s, url);
 
   return {
     addon: addonName,
@@ -593,6 +593,27 @@ export function normalizeStream(s, addonName) {
     score: scoreStream(label, playable, filename)
       + (playable && browserVerdict(`${label} ${filename || ''}`, url) === 'yes' ? 6 : 0),
   };
+}
+
+// The file's own name. Addons are meant to put it in behaviorHints.filename,
+// but not all do: some only write it into the description, and some only
+// have it at the end of the URL.
+const VIDEO_FILE = /[^\s/\\|"'<>]+\.(?:mkv|mp4|m4v|avi|mov|webm|ts|m2ts|wmv|flv|mpg|mpeg|iso)\b/i;
+
+function streamFilename(s, url) {
+  const hinted = typeof s.behaviorHints?.filename === 'string' ? s.behaviorHints.filename.trim() : '';
+  if (hinted) return hinted;
+  for (const text of [s.title, s.description]) {
+    const match = typeof text === 'string' && text.match(VIDEO_FILE);
+    if (match) return match[0];
+  }
+  if (url) {
+    try {
+      const last = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+      if (/\.(?:mkv|mp4|m4v|avi|mov|webm|ts|m2ts|wmv|flv|mpg|mpeg|iso)$/i.test(last)) return last;
+    } catch { /* not a URL we can read a name from */ }
+  }
+  return null;
 }
 
 // Would a browser play this file without help?
